@@ -29,7 +29,7 @@
 
 <!-- 1. Headline -->
 <div class="headline">
-  <div class="total">${{ "%.0f"|format(total_waste_usd) }} / month (est.)</div>
+  <div class="total">${{ "%.0f"|format(total_waste_usd) }} / month (est.){% if show_savings_pct and total_savings_pct is not none %} &mdash; {{ "%.0f"|format(total_savings_pct * 100) }}% of attributed spend{% endif %}</div>
   <div>{{ findings|length }} findings &mdash;
     <span class="sev-high">{{ n_high }} high</span>,
     <span class="sev-medium">{{ n_medium }} medium</span>,
@@ -47,6 +47,7 @@
       <th>Finding</th>
       <th>Instance</th>
       <th>Est. Waste / Mo</th>
+      {% if show_savings_pct %}<th>Savings %</th>{% endif %}
       <th>Severity</th>
       <th>Confidence</th>
       <th>Quick Fix</th>
@@ -59,6 +60,7 @@
       <td>{{ f.title }}</td>
       <td>{{ f.instance_key }}</td>
       <td><strong>${{ "%.0f"|format(f.monthly_waste_usd) }}</strong></td>
+      {% if show_savings_pct %}<td>{% if f.savings_pct is not none %}{{ "%.0f"|format(f.savings_pct * 100) }}%{% else %}&mdash;{% endif %}</td>{% endif %}
       <td class="sev-{{ f.severity }}">{{ f.severity }}</td>
       <td>{{ f.confidence }}</td>
       <td>{{ f.remediation.summary }}</td>
@@ -77,7 +79,7 @@
   <h3>{{ loop.index }}. {{ f.title }} <small style="color:#888">{{ f.rule_id }}</small></h3>
   <p><strong>Severity:</strong> <span class="sev-{{ f.severity }}">{{ f.severity }}</span> &nbsp;
      <strong>Confidence:</strong> {{ f.confidence }} &nbsp;
-     <strong>Est. Waste:</strong> ${{ "%.0f"|format(f.monthly_waste_usd) }}/mo</p>
+     <strong>Est. Waste:</strong> ${{ "%.0f"|format(f.monthly_waste_usd) }}/mo{% if show_savings_pct and f.savings_pct is not none %} ({{ "%.0f"|format(f.savings_pct * 100) }}% of ${{ "%.0f"|format(f.attributed_cost_usd) }} attributed){% endif %}</p>
   <p><strong>Instance:</strong> {{ f.instance_key }}</p>
   <div class="evidence">{{ f.evidence | tojson(indent=2) }}</div>
   <div class="remediation">

@@ -1,6 +1,7 @@
 """Pydantic models for Rule (parsed YAML) and Finding (one detected instance)."""
 
 from typing import Any
+
 from pydantic import BaseModel, Field
 
 
@@ -32,6 +33,12 @@ class Finding(BaseModel):
     confidence: str
     instance_key: str
     monthly_waste_usd: float
+    # Full-TCO cost basis this finding's waste is measured against (§6, Option A:
+    # dbu_cost_usd + vm_cost_usd). None for governance findings with no $ basis.
+    attributed_cost_usd: float | None = None
+    # Discount-invariant savings figure = monthly_waste_usd / attributed_cost_usd (§6).
+    # None when there's no attributed cost to divide by.
+    savings_pct: float | None = None
     evidence: dict[str, Any]
     remediation: Remediation
 

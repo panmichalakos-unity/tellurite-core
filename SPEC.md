@@ -143,7 +143,9 @@ references:
   - https://docs.databricks.com/aws/en/admin/system-tables/billing
 ```
 
-Engine maps each detection row → `Finding{rule_id, instance_key, monthly_waste_usd, severity, confidence, evidence, remediation}` and ranks by `monthly_waste_usd`.
+**The `list_cost_usd` a rule's `savings_model` sees is the full-TCO total** that the engine assembles (`dbu_cost_usd + vm_cost_usd`, §6) — **not** a column the rule SQL must compute itself (*decided: Option A*). A rule's `detection_sql` returns its cost columns (e.g. `dbu_cost_usd`, and the VM inputs the engine needs); the engine adds VM cost and exposes the combined `list_cost_usd` to the savings-model evaluator. Rules therefore stay decoupled from the DBU/VM split and the YAML never changes when the VM-cost layer lands. (Until M1.5, `vm_cost_usd = 0`, so `list_cost_usd == dbu_cost_usd`.)
+
+Engine maps each detection row → `Finding{rule_id, instance_key, monthly_waste_usd, attributed_cost_usd, savings_pct, severity, confidence, evidence, remediation}` and ranks by `monthly_waste_usd`. `savings_pct = monthly_waste_usd / attributed_cost_usd` (the discount-invariant figure, §6); it is `None` for findings with no attributed $ basis (e.g. governance findings whose `savings_model` is `"0"`).
 
 ## 8. Detection catalog v1
 

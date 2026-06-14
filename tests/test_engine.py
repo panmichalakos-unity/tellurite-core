@@ -2,13 +2,24 @@
 
 import pytest
 
-from tellurite.engine import _eval_savings, _pick_instance_key, load_rules
-from tellurite.models import Finding, Remediation, Rule
+from tellurite.engine import _eval_savings, _pick_instance_key, load_rules, run
+from tellurite.models import Remediation, Rule
+
+
+class _FakeConnector:
+    """Returns canned rows for any query — lets us exercise the engine offline."""
+
+    def __init__(self, rows: list[dict]) -> None:
+        self._rows = rows
+
+    def query(self, sql: str, params: dict | None = None) -> list[dict]:
+        return self._rows
 
 
 # ---------------------------------------------------------------------------
 # Rule loading
 # ---------------------------------------------------------------------------
+
 
 def test_load_rules_returns_nonempty_list():
     rules = load_rules()
@@ -25,6 +36,7 @@ def test_all_rules_have_required_fields():
 # ---------------------------------------------------------------------------
 # Savings model evaluation
 # ---------------------------------------------------------------------------
+
 
 def test_eval_savings_simple_multiplication():
     row = {"list_cost_usd": 1000.0}
@@ -45,6 +57,7 @@ def test_eval_savings_bad_expression_returns_zero():
 # Instance key selection
 # ---------------------------------------------------------------------------
 
+
 def test_pick_instance_key_job_id():
     assert _pick_instance_key({"job_id": "123", "list_cost_usd": 500}) == "123"
 
@@ -56,6 +69,7 @@ def test_pick_instance_key_fallback():
 # ---------------------------------------------------------------------------
 # Golden test — jobs_on_all_purpose rule
 # ---------------------------------------------------------------------------
+
 
 def _make_rule(rule_id: str) -> Rule:
     rules = {r.id: r for r in load_rules()}
@@ -80,3 +94,52 @@ def test_untagged_spend_savings_is_zero():
     rule = _make_rule("untagged_spend")
     row = {"untagged_cost_usd": 5000.0, "total_cost_usd": 20000.0}
     assert _eval_savings(rule.savings_model, row, {}) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Engine end-to-end (offline) — savings_pct + attributed cost (Option A, §7)
+# ---------------------------------------------------------------------------
+
+
+def _toy_rule(savings_model: str = "list_cost_usd * 0.5") -> Rule:
+    return Rule(
+        id="toy",
+        title="Toy rule",
+        category="compute_config",
+        severity="high",
+        confidence="high",
+        summary="s",
+        detection_sql="SELECT 1",
+        savings_model=savings_model,
+        remediation=Remediation(summary="fix it"),
+    )
+
+
+def test_run_computes_savings_pct_and_attributed_cost():
+    conn = _FakeConnector([{"job_id": "j1", "list_cost_usd": 1000.0}])
+    findings = run(conn, [_toy_rule()], lookback_days=30, min_cost_usd=50)
+    assert len(findings) == 1
+    f = findings[0]
+    assert f.monthly_waste_usd == pytest.approx(500.0)
+    assert f.attributed_cost_usd == pytest.approx(1000.0)
+    assert f.savings_pct == pytest.approx(0.5)  # discount-invariant
+    assert f.instance_key == "j1"
+
+
+def test_run_savings_pct_none_without_attributed_cost():
+    """A governance-style finding (savings_model '0', no list_cost_usd) has no % basis."""
+    conn = _FakeConnector([{"untagged_cost_usd": 5000.0, "total_cost_usd": 20000.0}])
+    findings = run(conn, [_toy_rule("0")], lookback_days=30, min_cost_usd=50)
+    assert len(findings) == 1
+    assert findings[0].monthly_waste_usd == 0.0
+    assert findings[0].savings_pct is None
+    assert findings[0].attributed_cost_usd is None
+
+
+def test_run_ranks_by_waste_desc():
+    rows = [
+        {"job_id": "small", "list_cost_usd": 200.0},
+        {"job_id": "big", "list_cost_usd": 5000.0},
+    ]
+    findings = run(_FakeConnector(rows), [_toy_rule()], lookback_days=30, min_cost_usd=50)
+    assert [f.instance_key for f in findings] == ["big", "small"]

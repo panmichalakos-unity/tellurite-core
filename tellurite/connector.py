@@ -1,11 +1,15 @@
-"""Databricks SQL connector — executes read-only queries against system.* tables."""
+"""Databricks SQL connector — executes read-only queries against system.* tables.
+
+Connection-only config lives here; run parameters (lookback, currency, discount,
+cloud, region) live on the Profile in `config.py`. The `databricks` SQL driver is
+imported lazily inside `connect()` so the engine and models stay unit-testable
+without the (heavy) driver installed.
+"""
 
 from __future__ import annotations
 
 import os
 from typing import Any
-
-from databricks import sql as dbsql
 
 
 class ConnectorConfig:
@@ -14,16 +18,10 @@ class ConnectorConfig:
         host: str | None = None,
         http_path: str | None = None,
         token: str | None = None,
-        lookback_days: int = 30,
-        currency: str = "USD",
-        discount_pct: float = 0.0,
     ) -> None:
-        self.host = host or os.environ["DATABRICKS_HOST"]
-        self.http_path = http_path or os.environ["DATABRICKS_HTTP_PATH"]
+        self.host = host or os.environ.get("DATABRICKS_HOST")
+        self.http_path = http_path or os.environ.get("DATABRICKS_HTTP_PATH")
         self.token = token or os.environ.get("DATABRICKS_TOKEN")
-        self.lookback_days = lookback_days
-        self.currency = currency
-        self.discount_pct = discount_pct
 
 
 class DatabricksConnector:
@@ -32,6 +30,13 @@ class DatabricksConnector:
         self._conn: Any = None
 
     def connect(self) -> None:
+        if not self._config.host or not self._config.http_path:
+            raise ValueError(
+                "Missing connection config: set host and http_path via a profile, "
+                "CLI flags, or DATABRICKS_HOST / DATABRICKS_HTTP_PATH env vars."
+            )
+        from databricks import sql as dbsql  # lazy: heavy driver, only needed for live runs
+
         kwargs: dict[str, Any] = {
             "server_hostname": self._config.host,
             "http_path": self._config.http_path,
@@ -45,7 +50,7 @@ class DatabricksConnector:
             self._conn.close()
             self._conn = None
 
-    def __enter__(self) -> "DatabricksConnector":
+    def __enter__(self) -> DatabricksConnector:
         self.connect()
         return self
 
@@ -60,7 +65,7 @@ class DatabricksConnector:
         with self._conn.cursor() as cur:
             cur.execute(resolved)
             cols = [d[0] for d in cur.description]
-            return [dict(zip(cols, row)) for row in cur.fetchall()]
+            return [dict(zip(cols, row, strict=True)) for row in cur.fetchall()]
 
     def ping(self) -> bool:
         """Verify connectivity with a trivial query."""

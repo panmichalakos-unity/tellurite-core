@@ -16,6 +16,7 @@ def render_html(
     lookback_days: int,
     currency: str = "USD",
     discount_pct: float = 0.0,
+    show_savings_pct: bool = True,
     out_path: Path | None = None,
 ) -> str:
     env = Environment(
@@ -24,9 +25,13 @@ def render_html(
     )
     template = env.get_template("report.html.j2")
     total_waste = sum(f.monthly_waste_usd for f in findings)
+    total_attributed = sum(f.attributed_cost_usd or 0.0 for f in findings)
+    total_pct = (total_waste / total_attributed) if total_attributed else None
     html = template.render(
         findings=findings,
         total_waste_usd=total_waste,
+        total_savings_pct=total_pct,
+        show_savings_pct=show_savings_pct,
         lookback_days=lookback_days,
         currency=currency,
         discount_pct=discount_pct,

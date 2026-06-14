@@ -7,11 +7,11 @@ import sys
 from pathlib import Path
 
 import click
-import yaml
 from rich.console import Console
 from rich.table import Table
 
 from tellurite import __version__
+from tellurite.config import load_profile
 from tellurite.connector import ConnectorConfig, DatabricksConnector
 from tellurite.engine import load_rules, run
 from tellurite.report import render_html
@@ -31,54 +31,98 @@ def cli() -> None:
 # ---------------------------------------------------------------------------
 # tellurite-audit run
 # ---------------------------------------------------------------------------
-@cli.command()
-@click.option("--host", envvar="DATABRICKS_HOST", help="Workspace hostname")
-@click.option("--http-path", envvar="DATABRICKS_HTTP_PATH", help="SQL warehouse HTTP path")
-@click.option("--token", envvar="DATABRICKS_TOKEN", help="Personal access token")
-@click.option("--lookback", default=30, show_default=True, help="Lookback window in days")
-@click.option("--min-cost", default=50.0, show_default=True, help="Minimum finding threshold (USD)")
-@click.option("--discount-pct", default=0.0, show_default=True, help="Discount vs list price (0–1)")
-@click.option("--currency", default="USD", show_default=True, help="Display currency")
+@cli.command("run")
+@click.option("--profile", default=None, help="Named profile from profiles.yaml")
+@click.option("--host", default=None, help="Workspace hostname (overrides profile/env)")
+@click.option("--http-path", default=None, help="SQL warehouse HTTP path (overrides profile/env)")
+@click.option(
+    "--token", envvar="DATABRICKS_TOKEN", default=None, help="Personal access token (prefer env)"
+)
+@click.option(
+    "--cloud", type=click.Choice(["azure", "aws"]), default=None, help="Cloud for VM pricing"
+)
+@click.option("--region", default=None, help="Cloud region for VM price catalog")
+@click.option("--lookback", "lookback_days", type=int, default=None, help="Lookback window in days")
+@click.option(
+    "--min-cost", "min_cost_usd", type=float, default=None, help="Minimum finding threshold (USD)"
+)
+@click.option("--discount-pct", type=float, default=None, help="Discount vs list price (0–1)")
+@click.option("--currency", default=None, help="Display currency")
+@click.option(
+    "--savings-pct/--no-savings-pct",
+    "show_savings_pct",
+    default=None,
+    help="Show the discount-invariant savings %% inline (default on)",
+)
 @click.option("--out", default="report.html", show_default=True, help="Output file path")
 @click.option("--rules-dir", default=None, type=click.Path(), help="Override rules directory")
 @click.option("--json-out", is_flag=True, help="Also emit findings as JSON")
 def run_cmd(
+    profile: str | None,
     host: str | None,
     http_path: str | None,
     token: str | None,
-    lookback: int,
-    min_cost: float,
-    discount_pct: float,
-    currency: str,
+    cloud: str | None,
+    region: str | None,
+    lookback_days: int | None,
+    min_cost_usd: float | None,
+    discount_pct: float | None,
+    currency: str | None,
+    show_savings_pct: bool | None,
     out: str,
     rules_dir: str | None,
     json_out: bool,
 ) -> None:
     """Run a full cost audit and produce a ranked HTML report."""
-    config = ConnectorConfig(
-        host=host,
-        http_path=http_path,
-        token=token,
-        lookback_days=lookback,
-        currency=currency,
-        discount_pct=discount_pct,
+    prof = load_profile(
+        profile,
+        overrides={
+            "host": host,
+            "http_path": http_path,
+            "cloud": cloud,
+            "region": region,
+            "lookback_days": lookback_days,
+            "min_cost_usd": min_cost_usd,
+            "discount_pct": discount_pct,
+            "currency": currency,
+            "show_savings_pct": show_savings_pct,
+        },
     )
-    rules_path = Path(rules_dir) if rules_dir else None
-    rules = load_rules(rules_path)
-    console.print(f"[bold]Loaded {len(rules)} rules.[/bold] Lookback: {lookback}d")
+
+    config = ConnectorConfig(host=prof.host, http_path=prof.http_path, token=token)
+    rules = load_rules(Path(rules_dir) if rules_dir else None)
+    console.print(
+        f"[bold]Loaded {len(rules)} rules.[/bold] Lookback: {prof.lookback_days}d · cloud: {prof.cloud}"
+    )
 
     with DatabricksConnector(config) as connector:
         if not connector.ping():
             console.print("[red]Connection check failed — aborting.[/red]")
             sys.exit(1)
         console.print("[green]Connected.[/green] Running rules…")
-        findings = run(connector, rules, lookback_days=lookback, min_cost_usd=min_cost, discount_pct=discount_pct)
+        findings = run(
+            connector,
+            rules,
+            lookback_days=prof.lookback_days,
+            min_cost_usd=prof.min_cost_usd,
+            discount_pct=prof.discount_pct,
+        )
 
     total = sum(f.monthly_waste_usd for f in findings)
-    console.print(f"\n[bold]{len(findings)} findings[/bold] — estimated monthly waste: [bold red]${total:,.0f}[/bold red]")
+    console.print(
+        f"\n[bold]{len(findings)} findings[/bold] — estimated monthly waste: "
+        f"[bold red]${total:,.0f}[/bold red]"
+    )
 
     out_path = Path(out)
-    render_html(findings, lookback_days=lookback, currency=currency, discount_pct=discount_pct, out_path=out_path)
+    render_html(
+        findings,
+        lookback_days=prof.lookback_days,
+        currency=prof.currency,
+        discount_pct=prof.discount_pct,
+        show_savings_pct=prof.show_savings_pct,
+        out_path=out_path,
+    )
     console.print(f"\nReport written to [bold]{out_path}[/bold]")
 
     if json_out:

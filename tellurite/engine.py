@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib.resources
 import logging
 import warnings
 from pathlib import Path
@@ -11,7 +10,7 @@ from typing import Any
 import yaml
 
 from tellurite.connector import DatabricksConnector
-from tellurite.models import Finding, Remediation, Rule
+from tellurite.models import Finding, Rule
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +61,11 @@ def run(
             waste = _eval_savings(rule.savings_model, row, params)
             if waste < min_cost_usd and rule.savings_model != "0":
                 continue
-            instance_key = _pick_instance_key(row)
+            # Option A (§7): list_cost_usd is the full-TCO basis the engine presents.
+            # Until M1.5 adds vm_cost_usd it equals the rule's DBU cost.
+            attributed = row.get("list_cost_usd")
+            attributed_cost = float(attributed) if attributed is not None else None
+            savings_pct = waste / attributed_cost if attributed_cost not in (None, 0) else None
             findings.append(
                 Finding(
                     rule_id=rule.id,
@@ -70,9 +73,11 @@ def run(
                     category=rule.category,
                     severity=rule.severity,
                     confidence=rule.confidence,
-                    instance_key=instance_key,
+                    instance_key=_pick_instance_key(row),
                     monthly_waste_usd=waste,
-                    evidence={k: v for k, v in row.items()},
+                    attributed_cost_usd=attributed_cost,
+                    savings_pct=savings_pct,
+                    evidence=dict(row),
                     remediation=rule.remediation,
                 )
             )
