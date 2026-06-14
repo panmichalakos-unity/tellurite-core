@@ -1,0 +1,62 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.Python
+*.so
+
+# Virtual environments
+.venv/
+venv/
+env/
+ENV/
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+*.egg
+.eggs/
+site-packages/
+
+# Pytest / coverage
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Ruff / mypy caches
+.ruff_cache/
+.mypy_cache/
+
+# Secrets & credentials — never commit tokens
+.env
+.env.*
+*.env
+profiles/*.yaml
+profiles/*.yml
+*.token
+databricks.cfg
+
+# Generated report output
+report.html
+report.md
+report.*.html
+report.*.md
+reports/
+
+# IDE
+.vscode/
+.idea/
+.cursor/
+*.suo
+*.user
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Notebooks (checkpoints can be noisy; keep .ipynb but drop checkpoints)
+.ipynb_checkpoints/

@@ -1,0 +1,340 @@
+# detection-rules.yaml — Databricks Cost Doctor seed catalog
+#
+# Data-driven rule definitions. The engine is generic; all rule specifics live here.
+# Contract: each rule's `detection_sql` returns ONE ROW PER FINDING INSTANCE, including
+# the columns referenced by `savings_model` (usually `list_cost_usd`) plus evidence keys.
+# See SPEC.md §6 (cost attribution) and §7 (rule model). :params are bound by the engine.
+#
+# Build order = ROI order: implement rules 1–4 first (high confidence, demo-ready),
+# then 5 & 10, then the heuristic ones. Stubs are marked  STATUS: stub  — Claude Code
+# should implement the SQL following the anchor-rule patterns below.
+
+defaults:
+  lookback_days: 30
+  min_cost_usd: 50        # ignore findings below this monthly $ (noise floor)
+  discount_pct: 0.0       # optional: scale list price → effective (0 = pure list)
+  currency: USD           # surfaced from list_prices.currency_code at runtime
+
+# Reusable cost-attribution join (see sql/cost_attribution.sql). Rules inline it for clarity;
+# the engine may also expose it as a CTE macro. Mid-period price changes are handled by the
+# time-window predicate on list_prices.
+
+rules:
+
+  # ---------------------------------------------------------------------------
+  - id: jobs_on_all_purpose
+    title: "Jobs running on all-purpose compute"
+    category: compute_config
+    severity: high
+    confidence: high
+    summary: "Scheduled jobs are using expensive all-purpose compute instead of jobs compute."
+    signal_tables: [system.billing.usage, system.billing.list_prices]
+    parameters:
+      jobs_compute_discount: 0.5   # assumed DBU saving moving all-purpose → jobs compute
+    detection_sql: |
+      SELECT
+        u.usage_metadata.job_id                                   AS job_id,
+        any_value(u.usage_metadata.job_name)                      AS job_name,
+        SUM(u.usage_quantity * lp.pricing.effective_list.default) AS list_cost_usd
+      FROM system.billing.usage u
+      JOIN system.billing.list_prices lp
+        ON  u.sku_name = lp.sku_name
+        AND u.usage_end_time >= lp.price_start_time
+        AND (lp.price_end_time IS NULL OR u.usage_end_time < lp.price_end_time)
+      WHERE u.usage_date >= DATE_SUB(current_date(), :lookback_days)
+        AND u.sku_name ILIKE '%ALL_PURPOSE%'
+        AND u.usage_metadata.job_id IS NOT NULL
+      GROUP BY u.usage_metadata.job_id
+      HAVING list_cost_usd > :min_cost_usd
+      ORDER BY list_cost_usd DESC
+    savings_model: "list_cost_usd * jobs_compute_discount"
+    remediation:
+      summary: "Move these jobs to jobs compute (job clusters), which bills at a lower DBU rate."
+      pr_hint: "In the job definition, replace the all-purpose cluster with a job cluster spec."
+    references:
+      - https://docs.databricks.com/aws/en/admin/system-tables/billing
+
+  # ---------------------------------------------------------------------------
+  - id: idle_sql_warehouses
+    title: "Idle / underutilized SQL warehouses"
+    category: idle
+    severity: high
+    confidence: medium
+    summary: "Warehouses are incurring cost with little or no query activity."
+    signal_tables: [system.billing.usage, system.query.history]
+    parameters:
+      min_queries: 25            # below this over the window = effectively idle
+      idle_recover_pct: 0.6      # conservative share of cost recoverable via auto-stop/right-size
+    detection_sql: |
+      WITH wh_cost AS (
+        SELECT
+          u.usage_metadata.warehouse_id                              AS warehouse_id,
+          SUM(u.usage_quantity * lp.pricing.effective_list.default)  AS list_cost_usd
+        FROM system.billing.usage u
+        JOIN system.billing.list_prices lp
+          ON  u.sku_name = lp.sku_name
+          AND u.usage_end_time >= lp.price_start_time
+          AND (lp.price_end_time IS NULL OR u.usage_end_time < lp.price_end_time)
+        WHERE u.usage_date >= DATE_SUB(current_date(), :lookback_days)
+          AND u.usage_metadata.warehouse_id IS NOT NULL
+        GROUP BY 1
+      ),
+      wh_activity AS (
+        SELECT
+          warehouse_id,
+          COUNT(*)                              AS query_count,
+          SUM(total_duration_ms)/1000.0/3600.0  AS active_hours
+        FROM system.query.history
+        WHERE start_time >= DATE_SUB(current_date(), :lookback_days)
+          AND warehouse_id IS NOT NULL
+        GROUP BY 1
+      )
+      SELECT
+        c.warehouse_id,
+        c.list_cost_usd,
+        COALESCE(a.query_count, 0) AS query_count,
+        COALESCE(a.active_hours, 0) AS active_hours
+      FROM wh_cost c
+      LEFT JOIN wh_activity a USING (warehouse_id)
+      WHERE c.list_cost_usd > :min_cost_usd
+        AND COALESCE(a.query_count, 0) < :min_queries
+      ORDER BY c.list_cost_usd DESC
+    savings_model: "list_cost_usd * idle_recover_pct"
+    remediation:
+      summary: "Lower auto-stop, downsize, or consolidate these warehouses; consider serverless."
+      pr_hint: "Reduce auto_stop_mins and warehouse size; merge low-traffic warehouses."
+    references:
+      - https://docs.databricks.com/aws/en/admin/system-tables/billing
+    # NOTE: verify `warehouse_id` / `total_duration_ms` column names in system.query.history at runtime.
+
+  # ---------------------------------------------------------------------------
+  - id: missing_auto_termination
+    title: "Clusters with missing or excessive auto-termination"
+    category: compute_config
+    severity: medium
+    confidence: medium
+    summary: "All-purpose clusters that don't auto-terminate (or terminate too late) burn idle DBUs."
+    signal_tables: [system.compute.clusters, system.billing.usage]
+    parameters:
+      max_autoterm_minutes: 60   # flag clusters above this (or 0/NULL)
+      idle_recover_pct: 0.15
+    detection_sql: |
+      WITH latest_cfg AS (
+        SELECT cluster_id, cluster_name, auto_termination_minutes, delete_time
+        FROM (
+          SELECT
+            cluster_id, cluster_name, auto_termination_minutes, delete_time,
+            ROW_NUMBER() OVER (PARTITION BY cluster_id ORDER BY change_time DESC) AS rn
+          FROM system.compute.clusters
+        )
+        WHERE rn = 1
+          AND delete_time IS NULL
+          AND (auto_termination_minutes IS NULL
+               OR auto_termination_minutes = 0
+               OR auto_termination_minutes > :max_autoterm_minutes)
+      ),
+      cost AS (
+        SELECT
+          u.usage_metadata.cluster_id                               AS cluster_id,
+          SUM(u.usage_quantity * lp.pricing.effective_list.default) AS list_cost_usd
+        FROM system.billing.usage u
+        JOIN system.billing.list_prices lp
+          ON  u.sku_name = lp.sku_name
+          AND u.usage_end_time >= lp.price_start_time
+          AND (lp.price_end_time IS NULL OR u.usage_end_time < lp.price_end_time)
+        WHERE u.usage_date >= DATE_SUB(current_date(), :lookback_days)
+          AND u.usage_metadata.cluster_id IS NOT NULL
+        GROUP BY 1
+      )
+      SELECT
+        lc.cluster_id, lc.cluster_name, lc.auto_termination_minutes, c.list_cost_usd
+      FROM latest_cfg lc
+      JOIN cost c USING (cluster_id)
+      WHERE c.list_cost_usd > :min_cost_usd
+      ORDER BY c.list_cost_usd DESC
+    savings_model: "list_cost_usd * idle_recover_pct"
+    remediation:
+      summary: "Set aggressive auto-termination (e.g. 10–15 min) on interactive clusters."
+      pr_hint: "Set autotermination_minutes on the cluster/policy definition."
+    references:
+      - https://docs.databricks.com/aws/en/admin/system-tables/compute
+    # NOTE: system.compute.clusters is versioned (SCD); `change_time` column name may vary — verify.
+
+  # ---------------------------------------------------------------------------
+  - id: untagged_spend
+    title: "Spend that can't be attributed (untagged)"
+    category: attribution
+    severity: medium
+    confidence: high
+    summary: "A share of spend has no custom tags, so it can't be attributed to a team or project."
+    signal_tables: [system.billing.usage]
+    parameters:
+      warn_pct: 0.20   # flag if >20% of cost is untagged
+    detection_sql: |
+      SELECT
+        SUM(CASE WHEN (u.custom_tags IS NULL OR size(map_keys(u.custom_tags)) = 0)
+                 THEN u.usage_quantity * lp.pricing.effective_list.default ELSE 0 END) AS untagged_cost_usd,
+        SUM(u.usage_quantity * lp.pricing.effective_list.default)                       AS total_cost_usd
+      FROM system.billing.usage u
+      JOIN system.billing.list_prices lp
+        ON  u.sku_name = lp.sku_name
+        AND u.usage_end_time >= lp.price_start_time
+        AND (lp.price_end_time IS NULL OR u.usage_end_time < lp.price_end_time)
+      WHERE u.usage_date >= DATE_SUB(current_date(), :lookback_days)
+      HAVING (untagged_cost_usd / NULLIF(total_cost_usd, 0)) > :warn_pct
+    savings_model: "0"   # not direct savings; it's an attribution/governance gap (see evidence)
+    remediation:
+      summary: "Enforce a tagging policy (team, project, env) via cluster policies & job tags."
+      pr_hint: "Add required custom_tags to cluster policies and job/warehouse definitions."
+    references:
+      - https://docs.databricks.com/aws/en/admin/system-tables/billing
+    # Engine: a savings_model of 0 yields a non-$ finding; rank by severity, show untagged_cost_usd as evidence.
+
+  # ---------------------------------------------------------------------------
+  - id: retry_failure_waste
+    title: "Compute wasted on failing / retrying jobs"
+    category: orchestration
+    severity: medium
+    confidence: medium
+    summary: "Jobs that repeatedly fail and retry burn compute with no successful output."
+    signal_tables: [system.lakeflow.job_run_timeline, system.billing.usage]
+    # STATUS: stub — implement. Pattern: join run outcomes (result_state IN FAILED/TIMEDOUT/CANCELED)
+    # from system.lakeflow.job_run_timeline to per-run cost. Aggregate failed-run cost per job_id.
+    # Verify schema: was system.workflow.* , recently renamed to system.lakeflow.* — confirm in target.
+    detection_sql: |
+      -- TODO(claude-code): per job_id, SUM(list_cost_usd) attributable to failed/retried runs
+      -- over :lookback_days; HAVING list_cost_usd > :min_cost_usd; ORDER BY list_cost_usd DESC.
+      SELECT NULL AS job_id, CAST(NULL AS DOUBLE) AS list_cost_usd WHERE 1=0
+    savings_model: "list_cost_usd"
+    remediation:
+      summary: "Fix the failing task; cap max_retries; alert on repeated failures."
+      pr_hint: "Reduce retry count and add failure alerting on the offending tasks."
+    references:
+      - https://docs.databricks.com/aws/en/admin/system-tables/
+
+  # ---------------------------------------------------------------------------
+  - id: over_provisioned_autoscale
+    title: "Over-provisioned autoscaling clusters"
+    category: compute_config
+    severity: medium
+    confidence: low
+    summary: "Clusters with high max autoscale workers relative to actual utilization."
+    signal_tables: [system.compute.clusters, system.billing.usage]
+    # STATUS: stub — heuristic, low confidence. Latest cfg max_autoscale_workers high + high cost,
+    # cross-referenced with utilization proxy. Flag for manual right-sizing review.
+    detection_sql: |
+      -- TODO(claude-code): latest cluster cfg where max_autoscale_workers >= :max_workers_threshold
+      -- joined to cluster cost; ORDER BY list_cost_usd DESC.
+      SELECT NULL AS cluster_id, CAST(NULL AS DOUBLE) AS list_cost_usd WHERE 1=0
+    savings_model: "list_cost_usd * 0.1"
+    remediation:
+      summary: "Cap autoscale max; right-size based on observed concurrency."
+      pr_hint: "Lower max_workers in the cluster/policy definition."
+    references:
+      - https://docs.databricks.com/aws/en/admin/system-tables/compute
+
+  # ---------------------------------------------------------------------------
+  - id: over_frequent_schedules
+    title: "Jobs scheduled more often than the data changes"
+    category: orchestration
+    severity: medium
+    confidence: low
+    summary: "High-cost jobs running on a cadence faster than downstream freshness needs."
+    signal_tables: [system.lakeflow.jobs, system.billing.usage]
+    # STATUS: stub — join job schedule cadence to per-job cost; flag expensive high-frequency jobs
+    # for a freshness/SLA review. Requires human judgment on actual freshness need.
+    detection_sql: |
+      SELECT NULL AS job_id, CAST(NULL AS DOUBLE) AS list_cost_usd WHERE 1=0
+    savings_model: "list_cost_usd * 0.2"
+    remediation:
+      summary: "Reduce frequency or switch to event/trigger-based runs where freshness allows."
+      pr_hint: "Adjust the job schedule / trigger to match data SLA."
+    references:
+      - https://docs.databricks.com/aws/en/admin/system-tables/
+
+  # ---------------------------------------------------------------------------
+  - id: photon_spend_review
+    title: "Photon spend review"
+    category: compute_config
+    severity: low
+    confidence: low
+    summary: "Surface Photon vs non-Photon spend share for a benefit review."
+    signal_tables: [system.billing.usage]
+    # STATUS: stub — report Photon vs non-Photon cost split (sku_name contains 'PHOTON').
+    # Informational: Photon pays off on heavy SQL/transform, not on light/streaming workloads.
+    detection_sql: |
+      SELECT NULL AS photon_flag, CAST(NULL AS DOUBLE) AS list_cost_usd WHERE 1=0
+    savings_model: "0"
+    remediation:
+      summary: "Toggle Photon where it actually changes price/perf; review workload-by-workload."
+      pr_hint: "Enable/disable Photon per workload based on measured speedup."
+    references:
+      - https://docs.databricks.com/aws/en/admin/system-tables/billing
+
+  # ---------------------------------------------------------------------------
+  - id: serverless_sprawl
+    title: "Serverless sprawl / misattribution"
+    category: compute_config
+    severity: medium
+    confidence: low
+    summary: "Steady serverless workloads that may be cheaper on classic, or unattributed serverless spend."
+    signal_tables: [system.billing.usage]
+    # STATUS: stub — group serverless SKUs by usage_metadata.job_name / identity_metadata.run_as;
+    # surface steady high-cost serverless workloads for a classic-vs-serverless review.
+    detection_sql: |
+      SELECT NULL AS workload, CAST(NULL AS DOUBLE) AS list_cost_usd WHERE 1=0
+    savings_model: "list_cost_usd * 0.15"
+    remediation:
+      summary: "Move predictable steady workloads to classic; tag serverless via usage policies."
+      pr_hint: "Attribute serverless with usage policies; reassess steady jobs."
+    references:
+      - https://docs.databricks.com/aws/en/admin/system-tables/serverless-billing
+
+  # ---------------------------------------------------------------------------
+  - id: expensive_long_queries
+    title: "Expensive long-running queries"
+    category: query
+    severity: medium
+    confidence: low
+    summary: "Top queries by total execution time — candidates for tuning."
+    signal_tables: [system.query.history]
+    parameters:
+      top_n: 25
+    detection_sql: |
+      SELECT
+        executed_by,
+        statement_type,
+        warehouse_id,
+        COUNT(*)                              AS executions,
+        SUM(total_duration_ms)/1000.0/3600.0  AS total_hours
+      FROM system.query.history
+      WHERE start_time >= DATE_SUB(current_date(), :lookback_days)
+      GROUP BY executed_by, statement_type, warehouse_id
+      ORDER BY total_hours DESC
+      LIMIT :top_n
+    savings_model: "0"   # proxy by time, not $; v2 attributes warehouse cost to queries
+    remediation:
+      summary: "Tune top queries (partition pruning, Z-order/liquid clustering, caching, joins)."
+      pr_hint: "Review query plans; add clustering/filters; materialize repeated heavy subqueries."
+    references:
+      - https://docs.databricks.com/aws/en/admin/system-tables/query-history
+    # Evidence ranks by total_hours. v2: proper query→cost attribution for real $ ranking.
+
+  # ---------------------------------------------------------------------------
+  - id: full_refresh_candidates
+    title: "Full-refresh pipelines that could be incremental"
+    category: orchestration
+    severity: medium
+    confidence: low
+    summary: "Long-running, high-cost recurring jobs whose cost scales with full reprocessing."
+    signal_tables: [system.lakeflow.job_run_timeline, system.billing.usage]
+    # STATUS: stub (dbt-aware) — flag recurring jobs with high per-run cost + long duration as
+    # incremental-model candidates. Strongest when cross-referenced with dbt project metadata (v2).
+    detection_sql: |
+      SELECT NULL AS job_id, CAST(NULL AS DOUBLE) AS list_cost_usd WHERE 1=0
+    savings_model: "list_cost_usd * 0.4"
+    remediation:
+      summary: "Convert full refreshes to incremental (dbt incremental models / MERGE on keys)."
+      pr_hint: "Add incremental materialization + unique_key; backfill once, then merge."
+    references:
+      - https://docs.databricks.com/aws/en/admin/system-tables/
