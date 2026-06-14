@@ -60,3 +60,6 @@ desktop.ini
 
 # Notebooks (checkpoints can be noisy; keep .ipynb but drop checkpoints)
 .ipynb_checkpoints/
+
+# Other
+Team Pipeline Cost & Resource Usage Calculator v2.sql

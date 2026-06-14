@@ -10,7 +10,7 @@ Read-only diagnostic that scans a Databricks workspace's `system.*` tables and p
 ## Safety (read before running)
 
 - Strictly **read-only**: only `SELECT` on `system.*`. Never touches business/customer data.
-- **No egress**: the report is written locally inside the workspace. Nothing phones home.
+- **No egress**: the report is written locally inside the workspace. Nothing phones home. The only outbound call is a pull of the cloud's **public** VM price catalog (cloud + region only — no workspace data leaves); it can be skipped for air-gapped runs via a bundled fallback price table.
 - Validating on your employer's workspace is a legit cost-optimization task — keep outputs internal and **anonymize** before anything becomes a public sample. See `SPEC.md` §15.
 
 ## Quickstart (target state — Claude Code builds this)
@@ -22,8 +22,11 @@ pip install -e .
 # configure a profile: host, http_path/warehouse, auth (env vars / Databricks auth)
 export DATABRICKS_HOST=... DATABRICKS_TOKEN=... DATABRICKS_HTTP_PATH=...
 
-# run a scan over the last 30 days → ranked HTML + Markdown report
-tellurite-audit run --profile work --lookback 30 --out report.html
+# run a scan over the last 30 days → ranked HTML + Markdown report (full-TCO: DBU + VM)
+tellurite-audit run --profile work --lookback 30 --cloud azure --out report.html
+
+# savings are shown as $ and as a % of cost; the % holds even under promo/negotiated pricing.
+# hide the inline % with --no-savings-pct (it stays in the JSON output regardless)
 
 # inspect / validate the rule catalog
 tellurite-audit rules list
@@ -34,7 +37,7 @@ Prereqs in the workspace: Unity Catalog enabled; `SELECT` granted on the `system
 
 ## How it works
 
-`cli.py` → load profile + `rules/*.yaml` → `engine.run()` executes each rule's read-only SQL via `connector.py` → applies `savings_model` → builds ranked `Finding`s → `report.py` renders HTML/Markdown. The `usage × list_prices` cost join lives in `attribution.py` / `sql/cost_attribution.sql`. The engine is generic — **all rule logic is data, not code.**
+`cli.py` → load profile + `rules/*.yaml` → `engine.run()` executes each rule's read-only SQL via `connector.py` → applies `savings_model` → builds ranked `Finding`s → `report.py` renders HTML/Markdown. Cost is **full TCO** (DBU + VM/infra): the DBU `usage × list_prices` join lives in `attribution.py` / `sql/cost_attribution.sql`, and VM prices come from `pricing.py` (cloud catalog snapshot, `--cloud azure|aws`, bundled fallback). The engine is generic — **all rule logic is data, not code.**
 
 ## Extending: add a detection rule
 

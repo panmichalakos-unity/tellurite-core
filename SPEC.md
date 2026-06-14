@@ -72,21 +72,27 @@ The Cost Doctor closes the gap between *reporting* and *remediation*.
 | `system.compute.clusters` | Cluster config: autoscale min/max, auto-termination, node types, owner, tags |
 | `system.compute.warehouse_events` | SQL warehouse start/stop/scaling events → uptime |
 | `system.compute.node_types` | Node specs (for right-sizing context) |
+| `system.compute.node_timeline` | **Real driver/worker CPU & memory utilization** (`cpu_user_percent`, `mem_used_percent`, `driver` flag) — the evidence base for right-sizing rules |
 | `system.query.history` | Per-statement execution: duration, `executed_by`, `statement_type`, warehouse |
 | `system.lakeflow.job_run_timeline` / `job_task_run_timeline` | Run outcomes & retries (schema recently renamed from `system.workflow.*` → verify in target workspace) |
 | `system.access.audit` | Optional: who changed configs |
+| _(external)_ Cloud public price catalog (Azure Retail Prices / AWS Pricing) | VM/infra $ for **full-TCO** costing (see §6). Fetched as a region-scoped public catalog, snapshotted per run; **no workspace data in the request.** |
 
 > **Schema caveat for the agent:** column names and the lakeflow/workflow schema name evolve. The engine must **introspect** (`DESCRIBE`/`information_schema`) and fail soft on a missing column rather than hard-crash. Verify against the customer's actual workspace at runtime.
+>
+> **node_timeline caveat:** utilization data may be partial or absent on some clusters/workspaces. **Never fabricate missing metrics** — a missing value lowers a finding's confidence or drops it, it does not get a made-up default. (This is the one thing not to copy from the prototype notebook.)
 
 ## 6. Cost attribution (the shared join)
 
-Convert DBUs to list dollars (handles mid-period price changes). This is load-bearing; every $-quantified rule reuses it.
+Tellurite quantifies on **full TCO = DBU cost + VM/infrastructure cost**, not DBU-only. On classic compute the cloud bills the underlying VMs separately (outside `system.billing.usage`), so a DBU-only figure understates real spend. Both halves are load-bearing; every $-quantified rule reuses this layer.
+
+**(a) DBU cost** — convert DBUs to list dollars (handles mid-period price changes). Prefer a promotional-aware price expression where present:
 
 ```sql
--- $ cost attributed to whatever grain the rule groups by
+-- DBU $ attributed to whatever grain the rule groups by
 SELECT
   /* rule-specific grouping cols */,
-  SUM(u.usage_quantity * lp.pricing.effective_list.default) AS list_cost_usd
+  SUM(u.usage_quantity * COALESCE(lp.pricing.promotional.default, lp.pricing.effective_list.default)) AS dbu_cost_usd
 FROM system.billing.usage u
 JOIN system.billing.list_prices lp
   ON  u.sku_name = lp.sku_name
@@ -96,9 +102,21 @@ WHERE u.usage_date >= DATE_SUB(current_date(), :lookback_days)
 GROUP BY 1
 ```
 
+**(b) VM/infra cost** — driver + workers × node-type hourly price × runtime hours, from a **price table snapshotted at run start**:
+- Cloud is parameterized: `--cloud azure|aws`. The engine fetches the region's **public** price catalog (Azure Retail Prices / AWS Pricing), then filters locally to the node types actually observed.
+- The fetch is a pure inbound pull of a public catalog — the request is parameterized on **cloud + region only** and carries **no workspace/job/cluster identifiers**. This satisfies the no-egress guarantee (Golden Rule #3): no workspace data leaves, it only pulls reference data in.
+- **Determinism (Golden Rule #4):** the fetched catalog is snapshotted once per run; re-running against the same snapshot reproduces output. Ship a bundled fallback table for offline/air-gapped runs.
+
+`list_cost_usd` (the column rules' `savings_model` references) is `dbu_cost_usd + vm_cost_usd`.
+
 Notes:
-- `effective_list.default` = list price; actual invoice may differ via private discounts/commit. Report **list $** and label it clearly ("estimated at list price; your effective rate may be lower"). Optional `discount_pct` param scales the figure.
-- Currency from `list_prices.currency_code`; surface it in the report.
+- Figures are **list-price estimates**; actual invoice may differ via private discounts/commit. Label clearly ("estimated at list price; your effective rate may be lower"). Optional `discount_pct` param scales the figure.
+- Currency from `list_prices.currency_code` (DBU side) and the cloud catalog's `currencyCode` (VM side); surface it and flag any mismatch in the report.
+
+**Express savings as a % of attributed cost, not just absolute $.** Every finding carries a `savings_pct = monthly_waste_usd / attributed_cost` alongside the dollar figure. This matters because the dollar amount is list-based, but the **percentage is invariant to the customer's actual rate**: if they run on promotional/negotiated pricing, their absolute $ differs from our list estimate, yet the *proportion* of spend that's wasted (and recoverable) stays true. So the % gain is the figure that holds regardless of discount.
+- Display the % **inline** next to each finding's $ and beside the price-basis/API-snapshot info, so the real, discount-independent benefit is always visible.
+- A toggle controls inline display of the percentage (default on); the underlying `savings_pct` is always computed and present in the JSON output.
+- The headline shows total waste as both $ and **% of total attributed spend** — the % being the claim that survives any discount the customer actually has.
 
 ## 7. Detection rule model
 
@@ -138,28 +156,35 @@ Seeded in `rules/` (see `rules/detection-rules.yaml` for full definitions + SQL)
 | 3 | Missing / excessive auto-termination | compute_config | Low | clusters config |
 | 4 | Untagged spend (can't attribute) | attribution | Low | enables chargeback upsell |
 | 5 | Retry / failure waste | orchestration | Med | lakeflow run timelines |
-| 6 | Over-provisioned autoscale | compute_config | Med | lower confidence; heuristic |
+| 6 | Over-provisioned autoscale / oversized clusters | compute_config | Med | **now evidence-backed via `node_timeline`** (not a config guess); worker CPU <20% → ~40% savings, <35% → ~25% |
 | 7 | Over-frequent schedules | orchestration | Med | cadence vs freshness need |
 | 8 | Photon spend review | compute_config | Low | report share; manual judgment |
 | 9 | Serverless sprawl / misattribution | compute_config | Med | serverless usage by job/run_as |
 | 10 | Expensive long-running queries | query | Med | query.history top-N |
 | 11 | Full-refresh candidates (→ incremental) | orchestration | Med | dbt-aware heuristic |
+| 12 | VM family/generation mismatch | compute_config | Med | `node_timeline` + node-type: memory-optimized node at low mem use; v3→v4/v5 upgrade (~15%) |
 
-Start with **1–4** (fast, high-confidence, demo-ready), then 5/10, then the heuristic ones.
+Start with **1–4** (fast, high-confidence, demo-ready), then 5/10. Rules **6 & 12** depend on the `node_timeline` utilization join + the VM-cost half of §6, so they land alongside full-TCO costing. Then the remaining heuristic ones.
+
+> **Utilization-based right-sizing (rules 6 & 12)** is the highest-value capability carried over from the prototype "Team Pipeline Cost & Resource Usage Calculator" notebook: real CPU/mem evidence turns right-sizing from a heuristic into a defensible $ finding. Reuse the notebook's thresholds and VM-family classification (E=memory, F=compute, D=general, L=storage; `_v3`→`_v4/_v5`), but **not** its fabricated-fallback metrics (see §5 caveat).
 
 ## 9. Output / deliverable spec
 
 Single `report.html` (+ `report.md` for pasting). Sections:
-1. **Headline** — total estimated monthly waste ($ + % of spend), # findings by severity.
-2. **Top findings** — ranked table: rule, instance, $/mo, confidence, one-line fix.
-3. **Per-finding detail** — evidence (the offending job/cluster/warehouse), why it's wasteful, the fix, a PR hint.
-4. **Spend overview** — by product/SKU, by tag (and an "untagged" call-out).
-5. **Methodology & caveats** — read-only, list-price basis, lookback window, confidence legend.
+1. **Headline** — total estimated monthly waste ($ **and % of total attributed spend**), # findings by severity. The % is the discount-invariant claim (§6).
+2. **Top findings** — ranked table: rule, instance, $/mo, **savings % (inline)**, confidence, one-line fix.
+3. **Per-finding detail** — evidence (the offending job/cluster/warehouse), why it's wasteful, the fix, a PR hint. Show **$ and savings % inline**, next to the price-basis / API-snapshot info, so the real proportional benefit is visible even where the customer's rate differs from list.
+4. **Spend overview** — by product/SKU, by tag (and an "untagged" call-out). Show the **DBU vs VM/infra** split (full-TCO basis, §6).
+5. **Methodology & caveats** — read-only, **full-TCO list-price basis** (DBU + VM, cloud + price-snapshot date), lookback window, confidence legend. State that **absolute $ is list-based but savings % holds under promotional/negotiated pricing**.
+
+Inline display of the savings % is controlled by a toggle (default on); the value is always present in the JSON output regardless.
 
 ## 10. Tech stack
 
 - **Python 3.11+**, `databricks-sql-connector` (or SDK), `pydantic` (Finding model), `pyyaml`, `jinja2`, `rich`/`click` (CLI), `pytest`.
 - Packaging: `pyproject.toml`; entry point `tellurite-audit`.
+- Cloud is parameterized (`--cloud azure|aws`) for the VM-price half of cost attribution (§6). A bundled fallback price table ships for offline/air-gapped runs.
+- `--savings-pct / --no-savings-pct` toggles inline display of the discount-invariant savings % (default on; always in JSON regardless — §6, §9).
 - Lint/format: `ruff` + `ruff format`. Typed throughout.
 
 ## 11. Repo structure
@@ -176,13 +201,16 @@ tellurite-core/
 │   ├── cli.py               ← `tellurite-audit run --profile ...`
 │   ├── connector.py         ← Databricks SQL execution, introspection
 │   ├── engine.py            ← load rules, run, build Findings
-│   ├── attribution.py       ← the usage×list_prices join
+│   ├── attribution.py       ← DBU (usage×list_prices) + VM cost join → full TCO (§6)
+│   ├── pricing.py           ← cloud VM price fetch/snapshot (azure|aws); bundled fallback
 │   ├── models.py            ← pydantic Finding/Rule
 │   └── report.py            ← Jinja render
 ├── rules/
 │   └── detection-rules.yaml ← seed catalog (provided)
 ├── sql/
 │   └── cost_attribution.sql ← shared snippet (provided)
+├── data/
+│   └── vm_prices_fallback.* ← bundled offline price table (azure|aws)
 ├── templates/
 │   └── report.html.j2       ← (Claude Code generates)
 └── tests/
@@ -196,8 +224,12 @@ tellurite-core/
 - ✅ Done when: `tellurite-audit --help` runs; connects to your work workspace; runs a trivial `SELECT 1`.
 
 **M1 — Attribution + 4 anchor rules (Week 1)**
-- Implement `attribution.py` and rules **1–4**. Engine produces ranked `Finding`s as JSON.
+- Implement `attribution.py` (DBU cost) and rules **1–4**. Engine produces ranked `Finding`s as JSON.
 - ✅ Done when: a JSON report from your real workspace shows ≥1 real finding per rule with sane $.
+
+**M1.5 — Full-TCO costing + utilization right-sizing**
+- Implement `pricing.py` (cloud VM price snapshot, `--cloud azure|aws`, bundled fallback); extend `attribution.py` to `dbu_cost + vm_cost`; add the `node_timeline` utilization join; ship rules **6 & 12**.
+- ✅ Done when: findings carry a DBU/VM split and ≥1 evidence-backed right-sizing finding appears; re-run on the same price snapshot is identical.
 
 **M2 — Report generator (Week 1–2)**
 - Jinja HTML + Markdown per §9. Ranked, dollar-quantified, per-finding fix.
@@ -232,6 +264,7 @@ _(v2 backlog: SQL/dbt AST analysis, remediation-PR generation via Claude Code, h
 ## 15. Data handling & responsible use
 
 - The tool reads **only `system.*` and resource metadata** — never customer/business data. Keep it that way; it's both the security story and the ethics.
+- The **one** outbound network call is a pull of the cloud's public VM price catalog (cloud + region only, no workspace identifiers); nothing about the workspace leaves. It can be disabled in favour of the bundled fallback price table for air-gapped runs.
 - When validating on your employer's workspace: it's a legitimate cost-optimization activity squarely in your remit, but treat outputs as internal, give your manager a heads-up, and **anonymize** workspace/job/cluster names before any output becomes a public case study or sales sample.
 - Sample reports for marketing must use synthetic or fully anonymized data.
 

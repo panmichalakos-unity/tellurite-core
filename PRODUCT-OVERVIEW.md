@@ -77,7 +77,7 @@ Data / platform teams of ~3–20 engineers, spending roughly **$15k–$150k/mo**
 
 **Isn't this just the Databricks usage dashboard?** The dashboard tells you *what* you spent. This tells you *why* and *what to change* — ranked by dollars, with fixes.
 
-**How accurate are the savings numbers?** Estimated at list price and labeled as such; your effective rate may be lower due to private discounts. Each finding carries a confidence level so you know which numbers are solid vs. heuristic.
+**How accurate are the savings numbers?** Estimated at list price and labeled as such; your effective rate may be lower due to private discounts. Crucially, every finding also shows the saving as a **percentage of cost** — and that percentage holds regardless of your discount: if you're on promotional or negotiated pricing, the dollar figure shifts but the proportion of spend you're wasting (and can recover) stays real. Each finding also carries a confidence level so you know which numbers are solid vs. heuristic.
 
 **Will it break anything?** No. It's strictly read-only and advisory. You decide what to change and merge it yourself.
 
