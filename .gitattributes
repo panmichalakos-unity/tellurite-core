@@ -11,3 +11,7 @@
 *.pdf  binary
 *.xlsx binary
 *.parquet binary
+*.ttf  binary
+*.woff binary
+*.woff2 binary
+*.eot  binary

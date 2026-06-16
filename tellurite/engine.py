@@ -47,6 +47,7 @@ def run(
     lookback_days: int = 30,
     min_cost_usd: float = 50.0,
     discount_pct: float = 0.0,
+    workspace_id: str | None = None,
     price_catalog: PriceCatalog | None = None,
 ) -> list[Finding]:
     """Execute each rule and return ranked Findings (highest waste first)."""
@@ -55,6 +56,8 @@ def run(
         "lookback_days": lookback_days,
         "min_cost_usd": min_cost_usd,
         "discount_pct": discount_pct,
+        # Scopes every rule to one workspace (system.* tables are account-wide).
+        "workspace_id": workspace_id,
     }
 
     for rule in rules:

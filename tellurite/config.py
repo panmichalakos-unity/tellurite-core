@@ -12,11 +12,15 @@ environment variable → built-in default.
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Any, Literal
 
 import yaml
 from pydantic import BaseModel
+
+# Azure Databricks hostnames embed the workspace id: adb-<workspace_id>.NN.azuredatabricks.net
+_AZURE_HOST_WS_ID = re.compile(r"^adb-(\d+)\.")
 
 # Searched in order; first existing file wins.
 PROFILE_SEARCH_PATHS = [
@@ -29,6 +33,7 @@ class Profile(BaseModel):
     name: str = "default"
     host: str | None = None
     http_path: str | None = None
+    workspace_id: str | None = None  # scope the audit to one workspace (§ scope decision)
     auth: Literal["pat", "oauth", "cli"] | None = None
     databricks_profile: str | None = None  # ~/.databrickscfg section for auth="cli"
     cloud: Literal["azure", "aws"] = "azure"
@@ -38,6 +43,7 @@ class Profile(BaseModel):
     discount_pct: float = 0.0
     min_cost_usd: float = 50.0
     show_savings_pct: bool = True
+    theme: Literal["basic", "corona"] = "corona"
 
 
 def _find_profiles_file(explicit: Path | None = None) -> Path | None:
@@ -77,4 +83,9 @@ def load_profile(
     merged.setdefault("host", os.environ.get("DATABRICKS_HOST"))
     merged.setdefault("http_path", os.environ.get("DATABRICKS_HTTP_PATH"))
     merged["name"] = name or "default"
+    # Derive workspace_id from an Azure host if not set explicitly (scopes the audit).
+    if not merged.get("workspace_id") and merged.get("host"):
+        m = _AZURE_HOST_WS_ID.match(str(merged["host"]))
+        if m:
+            merged["workspace_id"] = m.group(1)
     return Profile(**merged)

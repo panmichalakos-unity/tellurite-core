@@ -43,11 +43,13 @@ profiles.local.yaml
 *.token
 databricks.cfg
 
-# Generated report output
+# Generated report output (may contain workspace identifiers — never commit)
 report.html
 report.md
+report.json
 report.*.html
 report.*.md
+report.*.json
 reports/
 
 # IDE

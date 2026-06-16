@@ -1,0 +1,186 @@
+{#- Corona-themed (dark) Tellurite audit report. Self-contained: the vendored Corona
+    stylesheet (Bootstrap 4 + theme) is inlined by report.py so the file opens offline. -#}
+{%- macro sev_badge(sev) -%}
+  {%- set cls = {"high": "badge-danger", "medium": "badge-warning", "low": "badge-info"}.get(sev, "badge-secondary") -%}
+  <span class="badge {{ cls }}">{{ sev }}</span>
+{%- endmacro -%}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, shrink-to-fit=no">
+  <title>Tellurite — Databricks Cost Audit</title>
+  <style>{{ corona_css|safe }}</style>
+  <style>
+    /* Tellurite tweaks on top of Corona */
+    .tl-brand { font-weight: 700; letter-spacing: .04em; }
+    .tl-brand small { color: #6c7293; font-weight: 400; }
+    .evidence { font-family: monospace; font-size: .75rem; white-space: pre-wrap; color: #b8bccc; }
+    .table td, .table th { vertical-align: middle; }
+  </style>
+</head>
+<body>
+  <div class="container-scroller">
+    <!-- sidebar -->
+    <nav class="sidebar sidebar-offcanvas" id="sidebar">
+      <div class="sidebar-brand-wrapper d-none d-lg-flex align-items-center justify-content-center fixed-top">
+        <a class="sidebar-brand brand-logo tl-brand" href="#">TELLURITE</a>
+        <a class="sidebar-brand brand-logo-mini tl-brand" href="#">T</a>
+      </div>
+      <ul class="nav">
+        <li class="nav-item nav-category">Cost Audit</li>
+        <li class="nav-item"><a class="nav-link" href="#overview"><span class="menu-title">Overview</span></a></li>
+        <li class="nav-item"><a class="nav-link" href="#findings"><span class="menu-title">Findings</span></a></li>
+        <li class="nav-item"><a class="nav-link" href="#methodology"><span class="menu-title">Methodology</span></a></li>
+      </ul>
+    </nav>
+    <!-- /sidebar -->
+    <div class="container-fluid page-body-wrapper">
+      <nav class="navbar p-0 fixed-top d-flex flex-row">
+        <div class="navbar-brand-wrapper d-flex d-lg-none align-items-center justify-content-center">
+          <a class="navbar-brand brand-logo-mini tl-brand" href="#">T</a>
+        </div>
+        <div class="navbar-menu-wrapper flex-grow d-flex align-items-stretch">
+          <ul class="navbar-nav w-100">
+            <li class="nav-item">
+              <h5 class="mb-0 mt-2 tl-brand">Databricks Cost Audit <small>· by Akmonlabs</small></h5>
+            </li>
+          </ul>
+          <ul class="navbar-nav navbar-nav-right">
+            <li class="nav-item d-none d-lg-block">
+              <span class="text-muted">Lookback {{ lookback_days }}d · {{ currency }} · {{ generated_at }}</span>
+            </li>
+          </ul>
+        </div>
+      </nav>
+
+      <div class="main-panel">
+        <div class="content-wrapper">
+
+          <!-- Overview -->
+          <div class="row" id="overview">
+            <div class="col-xl-3 col-sm-6 grid-margin stretch-card">
+              <div class="card">
+                <div class="card-body">
+                  <h3 class="mb-0 text-danger">${{ "{:,.0f}".format(total_waste_usd) }}</h3>
+                  <h6 class="text-muted font-weight-normal">Est. monthly waste (full-TCO, list price)</h6>
+                </div>
+              </div>
+            </div>
+            <div class="col-xl-3 col-sm-6 grid-margin stretch-card">
+              <div class="card">
+                <div class="card-body">
+                  <h3 class="mb-0">{% if total_savings_pct is not none %}{{ "{:.0f}".format(total_savings_pct * 100) }}%{% else %}—{% endif %}</h3>
+                  <h6 class="text-muted font-weight-normal">Of attributed spend (discount-invariant)</h6>
+                </div>
+              </div>
+            </div>
+            <div class="col-xl-3 col-sm-6 grid-margin stretch-card">
+              <div class="card">
+                <div class="card-body">
+                  <h3 class="mb-0">{{ findings|length }}</h3>
+                  <h6 class="text-muted font-weight-normal">Findings</h6>
+                </div>
+              </div>
+            </div>
+            <div class="col-xl-3 col-sm-6 grid-margin stretch-card">
+              <div class="card">
+                <div class="card-body">
+                  <h3 class="mb-0">
+                    <span class="text-danger">{{ n_high }}</span>
+                    <small class="text-muted"> / {{ n_medium }} / {{ n_low }}</small>
+                  </h3>
+                  <h6 class="text-muted font-weight-normal">High / Medium / Low severity</h6>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Findings table -->
+          <div class="row" id="findings">
+            <div class="col-12 grid-margin stretch-card">
+              <div class="card">
+                <div class="card-body">
+                  <h4 class="card-title">Top findings</h4>
+                  <p class="text-muted mb-3">Ranked by estimated monthly waste.</p>
+                  {% if findings %}
+                  <div class="table-responsive">
+                    <table class="table table-hover">
+                      <thead>
+                        <tr>
+                          <th>#</th>
+                          <th>Finding</th>
+                          <th>Instance</th>
+                          <th>Category</th>
+                          <th class="text-right">$/mo</th>
+                          {% if show_savings_pct %}<th>Savings %</th>{% endif %}
+                          <th>Severity</th>
+                          <th>Confidence</th>
+                          <th>Fix</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {% for f in findings %}
+                        <tr>
+                          <td class="text-muted">{{ loop.index }}</td>
+                          <td>{{ f.title }}</td>
+                          <td><code>{{ f.instance_key }}</code></td>
+                          <td><span class="text-muted">{{ f.category }}</span></td>
+                          <td class="text-right font-weight-medium">${{ "{:,.0f}".format(f.monthly_waste_usd) }}</td>
+                          {% if show_savings_pct %}
+                          <td style="min-width:90px">
+                            {% if f.savings_pct is not none %}
+                            <div class="progress" style="height:6px">
+                              <div class="progress-bar bg-success" role="progressbar"
+                                   style="width: {{ [ (f.savings_pct * 100) | round(0, 'floor') | int, 100] | min }}%"></div>
+                            </div>
+                            <small class="text-muted">{{ "{:.0f}".format(f.savings_pct * 100) }}%</small>
+                            {% else %}<span class="text-muted">—</span>{% endif %}
+                          </td>
+                          {% endif %}
+                          <td>{{ sev_badge(f.severity) }}</td>
+                          <td><span class="text-muted">{{ f.confidence }}</span></td>
+                          <td><small>{{ f.remediation.summary }}</small></td>
+                        </tr>
+                        {% endfor %}
+                      </tbody>
+                    </table>
+                  </div>
+                  {% else %}
+                  <p class="text-success">No findings above the threshold.</p>
+                  {% endif %}
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Methodology -->
+          <div class="row" id="methodology">
+            <div class="col-12 grid-margin stretch-card">
+              <div class="card">
+                <div class="card-body">
+                  <h4 class="card-title">Methodology &amp; caveats</h4>
+                  <ul class="text-muted">
+                    <li><strong>Read-only:</strong> only <code>SELECT</code> on <code>system.*</code>. No business data accessed; nothing left the workspace.</li>
+                    <li><strong>Full-TCO list-price basis</strong> (DBU + VM/infra). Your effective rate may be lower via private discounts{% if discount_pct %}; a {{ "{:.0f}".format(discount_pct * 100) }}% discount was applied{% endif %}.</li>
+                    <li><strong>Savings %</strong> is discount-invariant — it holds even under promotional/negotiated pricing.</li>
+                    <li><strong>Lookback:</strong> {{ lookback_days }} days. Monthly figures are extrapolated from this window.</li>
+                    <li><strong>Confidence:</strong> high = direct $ evidence; medium = reliable heuristic; low = proxy requiring confirmation.</li>
+                  </ul>
+                </div>
+              </div>
+            </div>
+          </div>
+
+        </div>
+        <footer class="footer">
+          <div class="d-sm-flex justify-content-center justify-content-sm-between">
+            <span class="text-muted text-center text-sm-left d-block d-sm-inline-block">Tellurite Audit — Akmonlabs</span>
+            <span class="float-none float-sm-right d-block mt-1 mt-sm-0 text-center text-muted">Generated {{ generated_at }}</span>
+          </div>
+        </footer>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

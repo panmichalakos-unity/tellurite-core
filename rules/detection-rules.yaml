@@ -42,6 +42,7 @@ rules:
         AND u.usage_end_time >= lp.price_start_time
         AND (lp.price_end_time IS NULL OR u.usage_end_time < lp.price_end_time)
       WHERE u.usage_date >= DATE_SUB(current_date(), :lookback_days)
+        AND u.workspace_id = :workspace_id
         AND u.sku_name ILIKE '%ALL_PURPOSE%'
         AND u.usage_metadata.job_id IS NOT NULL
       GROUP BY u.usage_metadata.job_id
@@ -76,17 +77,19 @@ rules:
           AND u.usage_end_time >= lp.price_start_time
           AND (lp.price_end_time IS NULL OR u.usage_end_time < lp.price_end_time)
         WHERE u.usage_date >= DATE_SUB(current_date(), :lookback_days)
+          AND u.workspace_id = :workspace_id
           AND u.usage_metadata.warehouse_id IS NOT NULL
         GROUP BY 1
       ),
       wh_activity AS (
         SELECT
-          warehouse_id,
+          compute.warehouse_id                  AS warehouse_id,
           COUNT(*)                              AS query_count,
           SUM(total_duration_ms)/1000.0/3600.0  AS active_hours
         FROM system.query.history
         WHERE start_time >= DATE_SUB(current_date(), :lookback_days)
-          AND warehouse_id IS NOT NULL
+          AND workspace_id = :workspace_id
+          AND compute.warehouse_id IS NOT NULL
         GROUP BY 1
       )
       SELECT
@@ -126,6 +129,7 @@ rules:
             cluster_id, cluster_name, auto_termination_minutes, delete_time,
             ROW_NUMBER() OVER (PARTITION BY cluster_id ORDER BY change_time DESC) AS rn
           FROM system.compute.clusters
+          WHERE workspace_id = :workspace_id
         )
         WHERE rn = 1
           AND delete_time IS NULL
@@ -143,6 +147,7 @@ rules:
           AND u.usage_end_time >= lp.price_start_time
           AND (lp.price_end_time IS NULL OR u.usage_end_time < lp.price_end_time)
         WHERE u.usage_date >= DATE_SUB(current_date(), :lookback_days)
+          AND u.workspace_id = :workspace_id
           AND u.usage_metadata.cluster_id IS NOT NULL
         GROUP BY 1
       )
@@ -181,6 +186,7 @@ rules:
         AND u.usage_end_time >= lp.price_start_time
         AND (lp.price_end_time IS NULL OR u.usage_end_time < lp.price_end_time)
       WHERE u.usage_date >= DATE_SUB(current_date(), :lookback_days)
+        AND u.workspace_id = :workspace_id
       HAVING (untagged_cost_usd / NULLIF(total_cost_usd, 0)) > :warn_pct
     savings_model: "0"   # not direct savings; it's an attribution/governance gap (see evidence)
     remediation:
@@ -251,6 +257,7 @@ rules:
                  COALESCE(worker_count, min_autoscale_workers, 0) AS worker_count,
                  ROW_NUMBER() OVER (PARTITION BY cluster_id ORDER BY change_time DESC) AS rn
           FROM system.compute.clusters
+          WHERE workspace_id = :workspace_id
         ) WHERE rn = 1
       ),
       cost AS (
@@ -263,6 +270,7 @@ rules:
           AND u.usage_end_time >= lp.price_start_time
           AND (lp.price_end_time IS NULL OR u.usage_end_time < lp.price_end_time)
         WHERE u.usage_date >= DATE_SUB(current_date(), :lookback_days)
+          AND u.workspace_id = :workspace_id
           AND u.usage_metadata.cluster_id IS NOT NULL
         GROUP BY 1
       )
@@ -369,12 +377,13 @@ rules:
       SELECT
         executed_by,
         statement_type,
-        warehouse_id,
+        compute.warehouse_id                  AS warehouse_id,
         COUNT(*)                              AS executions,
         SUM(total_duration_ms)/1000.0/3600.0  AS total_hours
       FROM system.query.history
       WHERE start_time >= DATE_SUB(current_date(), :lookback_days)
-      GROUP BY executed_by, statement_type, warehouse_id
+        AND workspace_id = :workspace_id
+      GROUP BY executed_by, statement_type, compute.warehouse_id
       ORDER BY total_hours DESC
       LIMIT :top_n
     savings_model: "0"   # proxy by time, not $; v2 attributes warehouse cost to queries
@@ -440,6 +449,7 @@ rules:
                  COALESCE(worker_count, min_autoscale_workers, 0) AS worker_count,
                  ROW_NUMBER() OVER (PARTITION BY cluster_id ORDER BY change_time DESC) AS rn
           FROM system.compute.clusters
+          WHERE workspace_id = :workspace_id
         ) WHERE rn = 1
       ),
       cost AS (
@@ -452,6 +462,7 @@ rules:
           AND u.usage_end_time >= lp.price_start_time
           AND (lp.price_end_time IS NULL OR u.usage_end_time < lp.price_end_time)
         WHERE u.usage_date >= DATE_SUB(current_date(), :lookback_days)
+          AND u.workspace_id = :workspace_id
           AND u.usage_metadata.cluster_id IS NOT NULL
         GROUP BY 1
       ),

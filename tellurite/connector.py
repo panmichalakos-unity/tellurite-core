@@ -9,6 +9,8 @@ without the (heavy) driver installed.
 from __future__ import annotations
 
 import os
+from datetime import date, datetime
+from decimal import Decimal
 from typing import Any
 
 
@@ -96,7 +98,9 @@ class DatabricksConnector:
         with self._conn.cursor() as cur:
             cur.execute(resolved)
             cols = [d[0] for d in cur.description]
-            return [dict(zip(cols, row, strict=True)) for row in cur.fetchall()]
+            return [
+                {c: _jsonable(v) for c, v in zip(cols, row, strict=True)} for row in cur.fetchall()
+            ]
 
     def ping(self) -> bool:
         """Verify connectivity with a trivial query."""
@@ -111,6 +115,22 @@ class DatabricksConnector:
             return column.lower() in col_names
         except Exception:
             return False
+
+
+def _jsonable(value: Any) -> Any:
+    """Coerce Databricks result values to JSON-safe primitives, recursing into
+    structs/maps/arrays. Numeric cells arrive as Decimal, timestamps as datetime —
+    neither is JSON-serializable, and float keeps the engine's cost math simple.
+    """
+    if isinstance(value, Decimal):
+        return float(value)
+    if isinstance(value, (datetime, date)):
+        return value.isoformat()
+    if isinstance(value, dict):
+        return {k: _jsonable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(v) for v in value]
+    return value
 
 
 def _bind_params(sql: str, params: dict[str, Any]) -> str:

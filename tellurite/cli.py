@@ -67,6 +67,12 @@ def cli() -> None:
     help="Show the discount-invariant savings %% inline (default on)",
 )
 @click.option(
+    "--theme",
+    type=click.Choice(["basic", "corona"]),
+    default=None,
+    help="Report theme (default: corona dark dashboard)",
+)
+@click.option(
     "--no-price-fetch",
     "no_price_fetch",
     is_flag=True,
@@ -89,6 +95,7 @@ def run_cmd(
     discount_pct: float | None,
     currency: str | None,
     show_savings_pct: bool | None,
+    theme: str | None,
     no_price_fetch: bool,
     out: str,
     rules_dir: str | None,
@@ -109,6 +116,7 @@ def run_cmd(
             "discount_pct": discount_pct,
             "currency": currency,
             "show_savings_pct": show_savings_pct,
+            "theme": theme,
         },
     )
 
@@ -119,9 +127,18 @@ def run_cmd(
         auth=prof.auth,
         databricks_profile=prof.databricks_profile,
     )
+    if not prof.workspace_id:
+        console.print(
+            "[red]Could not determine workspace_id.[/red] system.* tables are account-wide, "
+            "so the audit must be scoped to one workspace. Set [bold]workspace_id[/bold] in the "
+            "profile (or use an Azure host like adb-<workspace_id>.NN.azuredatabricks.net)."
+        )
+        sys.exit(1)
+
     rules = load_rules(Path(rules_dir) if rules_dir else None)
     console.print(
-        f"[bold]Loaded {len(rules)} rules.[/bold] Lookback: {prof.lookback_days}d · cloud: {prof.cloud}"
+        f"[bold]Loaded {len(rules)} rules.[/bold] Workspace: {prof.workspace_id} · "
+        f"Lookback: {prof.lookback_days}d · cloud: {prof.cloud}"
     )
 
     catalog = load_price_catalog(
@@ -143,6 +160,7 @@ def run_cmd(
             lookback_days=prof.lookback_days,
             min_cost_usd=prof.min_cost_usd,
             discount_pct=prof.discount_pct,
+            workspace_id=prof.workspace_id,
             price_catalog=catalog,
         )
 
@@ -159,6 +177,7 @@ def run_cmd(
         currency=prof.currency,
         discount_pct=prof.discount_pct,
         show_savings_pct=prof.show_savings_pct,
+        theme=prof.theme,
         out_path=out_path,
     )
     console.print(f"\nReport written to [bold]{out_path}[/bold]")
