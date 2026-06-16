@@ -1,0 +1,19 @@
+{
+  "_about": "Approximate on-demand Linux VM hourly USD prices for offline/air-gapped runs. Region-agnostic estimates (seeded from the prototype, ~Jan 2025); live runs fetch exact region prices via pricing.py. Values are list price, not region-exact.",
+  "azure": {
+    "Standard_E4_v3": 0.532,
+    "Standard_E8_v3": 1.064,
+    "Standard_E16_v3": 2.128,
+    "Standard_E32_v3": 4.256,
+    "Standard_E8ds_v4": 1.064,
+    "Standard_E16ds_v4": 2.128,
+    "Standard_E32ds_v4": 4.256,
+    "Standard_E64ds_v4": 8.512,
+    "Standard_D8s_v3": 0.768,
+    "Standard_D16s_v3": 1.536,
+    "Standard_D32s_v3": 3.072,
+    "Standard_F16s_v2": 1.408,
+    "Standard_F32s_v2": 2.816
+  },
+  "aws": {}
+}
