@@ -29,6 +29,8 @@ class Profile(BaseModel):
     name: str = "default"
     host: str | None = None
     http_path: str | None = None
+    auth: Literal["pat", "oauth", "cli"] | None = None
+    databricks_profile: str | None = None  # ~/.databrickscfg section for auth="cli"
     cloud: Literal["azure", "aws"] = "azure"
     region: str | None = None
     lookback_days: int = 30

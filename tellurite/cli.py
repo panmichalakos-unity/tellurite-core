@@ -39,6 +39,17 @@ def cli() -> None:
     "--token", envvar="DATABRICKS_TOKEN", default=None, help="Personal access token (prefer env)"
 )
 @click.option(
+    "--auth",
+    type=click.Choice(["pat", "oauth", "cli"]),
+    default=None,
+    help="Auth mode (default: PAT if token present, else OAuth browser login)",
+)
+@click.option(
+    "--databricks-profile",
+    default=None,
+    help="~/.databrickscfg section name for --auth cli (else matched by host)",
+)
+@click.option(
     "--cloud", type=click.Choice(["azure", "aws"]), default=None, help="Cloud for VM pricing"
 )
 @click.option("--region", default=None, help="Cloud region for VM price catalog")
@@ -62,6 +73,8 @@ def run_cmd(
     host: str | None,
     http_path: str | None,
     token: str | None,
+    auth: str | None,
+    databricks_profile: str | None,
     cloud: str | None,
     region: str | None,
     lookback_days: int | None,
@@ -79,6 +92,8 @@ def run_cmd(
         overrides={
             "host": host,
             "http_path": http_path,
+            "auth": auth,
+            "databricks_profile": databricks_profile,
             "cloud": cloud,
             "region": region,
             "lookback_days": lookback_days,
@@ -89,7 +104,13 @@ def run_cmd(
         },
     )
 
-    config = ConnectorConfig(host=prof.host, http_path=prof.http_path, token=token)
+    config = ConnectorConfig(
+        host=prof.host,
+        http_path=prof.http_path,
+        token=token,
+        auth=prof.auth,
+        databricks_profile=prof.databricks_profile,
+    )
     rules = load_rules(Path(rules_dir) if rules_dir else None)
     console.print(
         f"[bold]Loaded {len(rules)} rules.[/bold] Lookback: {prof.lookback_days}d · cloud: {prof.cloud}"
@@ -132,6 +153,79 @@ def run_cmd(
             encoding="utf-8",
         )
         console.print(f"JSON findings written to [bold]{json_path}[/bold]")
+
+
+# ---------------------------------------------------------------------------
+# tellurite-audit ping
+# ---------------------------------------------------------------------------
+@cli.command("ping")
+@click.option("--profile", default=None, help="Named profile from profiles.yaml")
+@click.option("--host", default=None, help="Workspace hostname (overrides profile/env)")
+@click.option("--http-path", default=None, help="SQL warehouse HTTP path (overrides profile/env)")
+@click.option(
+    "--token", envvar="DATABRICKS_TOKEN", default=None, help="Personal access token (prefer env)"
+)
+@click.option(
+    "--auth",
+    type=click.Choice(["pat", "oauth", "cli"]),
+    default=None,
+    help="Auth mode (default: PAT if token present, else OAuth browser login)",
+)
+@click.option(
+    "--databricks-profile",
+    default=None,
+    help="~/.databrickscfg section name for --auth cli (else matched by host)",
+)
+def ping_cmd(
+    profile: str | None,
+    host: str | None,
+    http_path: str | None,
+    token: str | None,
+    auth: str | None,
+    databricks_profile: str | None,
+) -> None:
+    """Verify workspace connectivity (runs a trivial SELECT 1)."""
+    prof = load_profile(
+        profile,
+        overrides={
+            "host": host,
+            "http_path": http_path,
+            "auth": auth,
+            "databricks_profile": databricks_profile,
+        },
+    )
+    config = ConnectorConfig(
+        host=prof.host,
+        http_path=prof.http_path,
+        token=token,
+        auth=prof.auth,
+        databricks_profile=prof.databricks_profile,
+    )
+    mode = {
+        "cli": "Databricks CLI unified auth",
+        "pat": "PAT",
+        "oauth": "OAuth (browser)",
+    }.get(prof.auth or ("pat" if config.token else "oauth"), "OAuth (browser)")
+    console.print(f"Connecting to [bold]{prof.host}[/bold] via {mode}…")
+    try:
+        with DatabricksConnector(config) as connector:
+            ok = connector.ping()
+    except Exception as exc:
+        console.print(f"[red]Connection failed:[/red] {exc}")
+        if prof.auth == "cli":
+            console.print(
+                "[yellow]Hint:[/yellow] auth=cli reuses Databricks unified-auth credentials "
+                "but none are configured. Either:\n"
+                f"  • install the Databricks CLI and run: databricks auth login --host https://{prof.host}\n"
+                "  • or use a one-off browser login now:   tellurite-audit ping --profile "
+                f"{prof.name} --auth oauth"
+            )
+        sys.exit(1)
+    if ok:
+        console.print("[green]✓ SELECT 1 succeeded — connection OK.[/green]")
+    else:
+        console.print("[red]✗ SELECT 1 returned unexpected result.[/red]")
+        sys.exit(1)
 
 
 # ---------------------------------------------------------------------------

@@ -18,10 +18,21 @@ class ConnectorConfig:
         host: str | None = None,
         http_path: str | None = None,
         token: str | None = None,
+        auth: str | None = None,
+        databricks_profile: str | None = None,
     ) -> None:
         self.host = host or os.environ.get("DATABRICKS_HOST")
         self.http_path = http_path or os.environ.get("DATABRICKS_HTTP_PATH")
         self.token = token or os.environ.get("DATABRICKS_TOKEN")
+        # Auth mode: "pat" | "oauth" | "cli". Default: PAT if a token is available,
+        # else OAuth user-to-machine (browser login, no PAT required).
+        #   pat   — personal access token
+        #   oauth — connector-native U2M browser login (cached by the connector)
+        #   cli   — Databricks unified auth via the SDK (~/.databrickscfg from
+        #           `databricks auth login`, env vars, Azure CLI); headless after login
+        self.auth = auth or os.environ.get("DATABRICKS_AUTH")
+        # Optional ~/.databrickscfg section name for auth="cli" (else matched by host).
+        self.databricks_profile = databricks_profile or os.environ.get("DATABRICKS_CONFIG_PROFILE")
 
 
 class DatabricksConnector:
@@ -41,8 +52,28 @@ class DatabricksConnector:
             "server_hostname": self._config.host,
             "http_path": self._config.http_path,
         }
-        if self._config.token:
+        auth = self._config.auth
+        # PAT when a token is present (or auth=pat) and not explicitly oauth/cli.
+        use_pat = auth == "pat" or (auth not in ("oauth", "cli") and self._config.token)
+        if auth == "cli":
+            # Databricks unified auth via the SDK: reuses ~/.databrickscfg credentials
+            # created by `databricks auth login` (and env vars / Azure CLI). Headless
+            # after the first login; the SDK refreshes OAuth tokens automatically.
+            from databricks.sdk.core import Config
+
+            cfg = (
+                Config(profile=self._config.databricks_profile)
+                if self._config.databricks_profile
+                else Config(host=f"https://{self._config.host}")
+            )
+            kwargs["credentials_provider"] = lambda: cfg.authenticate
+        elif use_pat:
+            if not self._config.token:
+                raise ValueError("auth=pat requires a token (DATABRICKS_TOKEN or --token).")
             kwargs["access_token"] = self._config.token
+        else:
+            # Connector-native user-to-machine OAuth: opens a browser, caches the token.
+            kwargs["auth_type"] = "databricks-oauth"
         self._conn = dbsql.connect(**kwargs)
 
     def close(self) -> None:

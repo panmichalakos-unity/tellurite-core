@@ -35,6 +35,26 @@ tellurite-audit rules check
 
 Prereqs in the workspace: Unity Catalog enabled; `SELECT` granted on the `system` schemas you scan (billing is on by default; others may need enabling by an account admin).
 
+### Authentication
+
+Three modes, selected by `auth:` in a profile or `--auth`:
+
+- **`cli` — Databricks unified auth (recommended, no PAT needed).** One-time login, then headless (tokens auto-refresh):
+  ```bash
+  winget install Databricks.DatabricksCLI          # or see docs for other OSes
+  databricks auth login --host https://adb-XXXX.NN.azuredatabricks.net
+  ```
+  The SDK reads `~/.databrickscfg` (matched by host, or pin a section with `--databricks-profile`). `az login` also works if the Azure CLI is configured.
+- **`oauth`** — connector-native browser login (no CLI install); token cached by the connector.
+- **`pat`** — personal access token via `DATABRICKS_TOKEN` / `--token`.
+
+Copy `profiles.example.yaml` → `profiles.yaml` (gitignored) to save a workspace, then:
+
+```bash
+tellurite-audit ping --profile work     # verify connectivity (SELECT 1)
+tellurite-audit run  --profile work --out report.html
+```
+
 ## How it works
 
 `cli.py` → load profile + `rules/*.yaml` → `engine.run()` executes each rule's read-only SQL via `connector.py` → applies `savings_model` → builds ranked `Finding`s → `report.py` renders HTML/Markdown. Cost is **full TCO** (DBU + VM/infra): the DBU `usage × list_prices` join lives in `attribution.py` / `sql/cost_attribution.sql`, and VM prices come from `pricing.py` (cloud catalog snapshot, `--cloud azure|aws`, bundled fallback). The engine is generic — **all rule logic is data, not code.**

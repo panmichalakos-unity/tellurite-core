@@ -1,0 +1,13 @@
+# Normalize all text files to LF in the repository and on checkout, so line
+# endings are deterministic across machines (no CRLF churn on Windows).
+* text=auto eol=lf
+
+# Treat common binaries as binary (never EOL-converted).
+*.png  binary
+*.jpg  binary
+*.jpeg binary
+*.gif  binary
+*.ico  binary
+*.pdf  binary
+*.xlsx binary
+*.parquet binary

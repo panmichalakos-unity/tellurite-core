@@ -36,6 +36,10 @@ htmlcov/
 *.env
 profiles/*.yaml
 profiles/*.yml
+# Local profile config holds workspace identifiers (host, warehouse id) — keep local.
+profiles.yaml
+profiles.local.yaml
+!profiles.example.yaml
 *.token
 databricks.cfg
 

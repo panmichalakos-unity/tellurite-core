@@ -1,0 +1,17 @@
+# profiles.example.yaml — template for local profiles.
+# Copy to `profiles.yaml` (gitignored) and fill in your workspace. Each top-level
+# key is a profile name selectable with `--profile <name>`.
+#
+# Secrets (tokens) are NEVER stored here — use env vars or, preferably, auth: cli
+# (Databricks unified auth via `databricks auth login`).
+
+work:
+  host: adb-XXXXXXXXXXXX.NN.azuredatabricks.net   # workspace hostname, no https://
+  http_path: /sql/1.0/warehouses/XXXXXXXXXXXX      # SQL warehouse HTTP path
+  auth: cli                                        # pat | oauth | cli (unified auth)
+  # databricks_profile: my-cfg-section             # optional: ~/.databrickscfg section (else matched by host)
+  cloud: azure                                     # azure | aws (for VM pricing, M1.5)
+  region: northeurope                              # cloud region for the VM price catalog
+  lookback_days: 30
+  currency: USD
+  discount_pct: 0.0                                # 0–1; scales list price → your effective rate
