@@ -33,9 +33,9 @@ rules:
       jobs_compute_discount: 0.5   # assumed DBU saving moving all-purpose → jobs compute
     detection_sql: |
       SELECT
-        u.usage_metadata.job_id                                   AS job_id,
-        any_value(u.usage_metadata.job_name)                      AS job_name,
-        SUM(u.usage_quantity * lp.pricing.effective_list.default) AS list_cost_usd
+        u.usage_metadata.job_id              AS job_id,
+        any_value(u.usage_metadata.job_name) AS job_name,
+        SUM(u.usage_quantity * COALESCE(lp.pricing.promotional.default, lp.pricing.effective_list.default)) AS dbu_cost_usd
       FROM system.billing.usage u
       JOIN system.billing.list_prices lp
         ON  u.sku_name = lp.sku_name
@@ -45,8 +45,8 @@ rules:
         AND u.sku_name ILIKE '%ALL_PURPOSE%'
         AND u.usage_metadata.job_id IS NOT NULL
       GROUP BY u.usage_metadata.job_id
-      HAVING list_cost_usd > :min_cost_usd
-      ORDER BY list_cost_usd DESC
+      HAVING dbu_cost_usd > :min_cost_usd
+      ORDER BY dbu_cost_usd DESC
     savings_model: "list_cost_usd * jobs_compute_discount"
     remediation:
       summary: "Move these jobs to jobs compute (job clusters), which bills at a lower DBU rate."
@@ -68,8 +68,8 @@ rules:
     detection_sql: |
       WITH wh_cost AS (
         SELECT
-          u.usage_metadata.warehouse_id                              AS warehouse_id,
-          SUM(u.usage_quantity * lp.pricing.effective_list.default)  AS list_cost_usd
+          u.usage_metadata.warehouse_id AS warehouse_id,
+          SUM(u.usage_quantity * COALESCE(lp.pricing.promotional.default, lp.pricing.effective_list.default)) AS dbu_cost_usd
         FROM system.billing.usage u
         JOIN system.billing.list_prices lp
           ON  u.sku_name = lp.sku_name
@@ -91,14 +91,14 @@ rules:
       )
       SELECT
         c.warehouse_id,
-        c.list_cost_usd,
+        c.dbu_cost_usd,
         COALESCE(a.query_count, 0) AS query_count,
         COALESCE(a.active_hours, 0) AS active_hours
       FROM wh_cost c
       LEFT JOIN wh_activity a USING (warehouse_id)
-      WHERE c.list_cost_usd > :min_cost_usd
+      WHERE c.dbu_cost_usd > :min_cost_usd
         AND COALESCE(a.query_count, 0) < :min_queries
-      ORDER BY c.list_cost_usd DESC
+      ORDER BY c.dbu_cost_usd DESC
     savings_model: "list_cost_usd * idle_recover_pct"
     remediation:
       summary: "Lower auto-stop, downsize, or consolidate these warehouses; consider serverless."
@@ -135,8 +135,8 @@ rules:
       ),
       cost AS (
         SELECT
-          u.usage_metadata.cluster_id                               AS cluster_id,
-          SUM(u.usage_quantity * lp.pricing.effective_list.default) AS list_cost_usd
+          u.usage_metadata.cluster_id AS cluster_id,
+          SUM(u.usage_quantity * COALESCE(lp.pricing.promotional.default, lp.pricing.effective_list.default)) AS dbu_cost_usd
         FROM system.billing.usage u
         JOIN system.billing.list_prices lp
           ON  u.sku_name = lp.sku_name
@@ -147,11 +147,11 @@ rules:
         GROUP BY 1
       )
       SELECT
-        lc.cluster_id, lc.cluster_name, lc.auto_termination_minutes, c.list_cost_usd
+        lc.cluster_id, lc.cluster_name, lc.auto_termination_minutes, c.dbu_cost_usd
       FROM latest_cfg lc
       JOIN cost c USING (cluster_id)
-      WHERE c.list_cost_usd > :min_cost_usd
-      ORDER BY c.list_cost_usd DESC
+      WHERE c.dbu_cost_usd > :min_cost_usd
+      ORDER BY c.dbu_cost_usd DESC
     savings_model: "list_cost_usd * idle_recover_pct"
     remediation:
       summary: "Set aggressive auto-termination (e.g. 10–15 min) on interactive clusters."
@@ -173,8 +173,8 @@ rules:
     detection_sql: |
       SELECT
         SUM(CASE WHEN (u.custom_tags IS NULL OR size(map_keys(u.custom_tags)) = 0)
-                 THEN u.usage_quantity * lp.pricing.effective_list.default ELSE 0 END) AS untagged_cost_usd,
-        SUM(u.usage_quantity * lp.pricing.effective_list.default)                       AS total_cost_usd
+                 THEN u.usage_quantity * COALESCE(lp.pricing.promotional.default, lp.pricing.effective_list.default) ELSE 0 END) AS untagged_cost_usd,
+        SUM(u.usage_quantity * COALESCE(lp.pricing.promotional.default, lp.pricing.effective_list.default))                       AS total_cost_usd
       FROM system.billing.usage u
       JOIN system.billing.list_prices lp
         ON  u.sku_name = lp.sku_name

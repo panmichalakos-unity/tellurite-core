@@ -58,11 +58,11 @@ def run(
             continue
 
         for row in rows:
+            row = _with_total_cost(row)
             waste = _eval_savings(rule.savings_model, row, params)
             if waste < min_cost_usd and rule.savings_model != "0":
                 continue
             # Option A (§7): list_cost_usd is the full-TCO basis the engine presents.
-            # Until M1.5 adds vm_cost_usd it equals the rule's DBU cost.
             attributed = row.get("list_cost_usd")
             attributed_cost = float(attributed) if attributed is not None else None
             savings_pct = waste / attributed_cost if attributed_cost not in (None, 0) else None
@@ -84,6 +84,21 @@ def run(
 
     findings.sort(key=lambda f: (-f.monthly_waste_usd, f.severity_rank))
     return findings
+
+
+def _with_total_cost(row: dict[str, Any]) -> dict[str, Any]:
+    """Assemble the full-TCO basis the engine exposes to rules (Option A, §7).
+
+    `list_cost_usd = dbu_cost_usd + vm_cost_usd`. Rules return `dbu_cost_usd` (the DBU
+    attribution); `vm_cost_usd` is added by the pricing layer at M1.5 (absent → 0 now),
+    so the YAML never changes when VM cost lands. Falls back to a rule-provided
+    `list_cost_usd` for rules/fixtures that already expose the total directly.
+    """
+    if "dbu_cost_usd" in row:
+        dbu = float(row.get("dbu_cost_usd") or 0.0)
+        vm = float(row.get("vm_cost_usd") or 0.0)
+        return {**row, "list_cost_usd": dbu + vm}
+    return row
 
 
 def _eval_savings(model: str, row: dict[str, Any], params: dict[str, Any]) -> float:

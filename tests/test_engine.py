@@ -2,7 +2,13 @@
 
 import pytest
 
-from tellurite.engine import _eval_savings, _pick_instance_key, load_rules, run
+from tellurite.engine import (
+    _eval_savings,
+    _pick_instance_key,
+    _with_total_cost,
+    load_rules,
+    run,
+)
 from tellurite.models import Remediation, Rule
 
 
@@ -143,3 +149,86 @@ def test_run_ranks_by_waste_desc():
     ]
     findings = run(_FakeConnector(rows), [_toy_rule()], lookback_days=30, min_cost_usd=50)
     assert [f.instance_key for f in findings] == ["big", "small"]
+
+
+# ---------------------------------------------------------------------------
+# Cost assembly seam (Option A, §7): list_cost_usd = dbu_cost_usd + vm_cost_usd
+# ---------------------------------------------------------------------------
+
+
+def test_with_total_cost_assembles_from_dbu():
+    assert _with_total_cost({"dbu_cost_usd": 100.0})["list_cost_usd"] == 100.0
+
+
+def test_with_total_cost_adds_vm():
+    # The M1.5 seam: a vm_cost_usd column raises the basis with zero YAML change.
+    assert _with_total_cost({"dbu_cost_usd": 100.0, "vm_cost_usd": 40.0})["list_cost_usd"] == 140.0
+
+
+def test_with_total_cost_fallback_and_passthrough():
+    assert _with_total_cost({"list_cost_usd": 7.0})["list_cost_usd"] == 7.0  # rule-provided total
+    assert "list_cost_usd" not in _with_total_cost({"foo": 1})  # no cost columns → unchanged
+
+
+# ---------------------------------------------------------------------------
+# Golden tests — anchor rules 1–4 through the engine (offline, fixture rows)
+# ---------------------------------------------------------------------------
+
+
+def _run_rule(rule_id: str, rows: list[dict], min_cost_usd: float = 50.0):
+    return run(
+        _FakeConnector(rows), [_make_rule(rule_id)], lookback_days=30, min_cost_usd=min_cost_usd
+    )
+
+
+def test_golden_jobs_on_all_purpose():
+    rows = [
+        {"job_id": "a", "job_name": "nightly", "dbu_cost_usd": 2000.0},
+        {"job_id": "b", "job_name": "adhoc", "dbu_cost_usd": 500.0},
+    ]
+    findings = _run_rule("jobs_on_all_purpose", rows)
+    assert [f.instance_key for f in findings] == ["a", "b"]  # ranked by waste
+    assert findings[0].monthly_waste_usd == pytest.approx(1000.0)  # 2000 * 0.5
+    assert findings[0].attributed_cost_usd == pytest.approx(2000.0)
+    assert findings[0].savings_pct == pytest.approx(0.5)
+
+
+def test_golden_idle_sql_warehouses():
+    rows = [{"warehouse_id": "w1", "dbu_cost_usd": 1000.0, "query_count": 3, "active_hours": 0.2}]
+    findings = _run_rule("idle_sql_warehouses", rows)
+    assert findings[0].instance_key == "w1"
+    assert findings[0].monthly_waste_usd == pytest.approx(600.0)  # 1000 * 0.6
+    assert findings[0].savings_pct == pytest.approx(0.6)
+
+
+def test_golden_missing_auto_termination():
+    rows = [
+        {
+            "cluster_id": "c1",
+            "cluster_name": "interactive",
+            "auto_termination_minutes": None,
+            "dbu_cost_usd": 1000.0,
+        }
+    ]
+    findings = _run_rule("missing_auto_termination", rows)
+    assert findings[0].instance_key == "c1"
+    assert findings[0].monthly_waste_usd == pytest.approx(150.0)  # 1000 * 0.15
+
+
+def test_golden_untagged_spend_is_governance_finding():
+    rows = [{"untagged_cost_usd": 5000.0, "total_cost_usd": 20000.0}]
+    findings = _run_rule("untagged_spend", rows)
+    assert len(findings) == 1  # kept despite savings_model "0"
+    f = findings[0]
+    assert f.monthly_waste_usd == 0.0
+    assert f.savings_pct is None
+    assert f.attributed_cost_usd is None
+    assert f.evidence["untagged_cost_usd"] == 5000.0
+
+
+def test_golden_vm_cost_lifts_basis_and_waste():
+    """End-to-end of the M1.5 seam through a real rule: vm_cost_usd raises both."""
+    rows = [{"job_id": "a", "dbu_cost_usd": 1000.0, "vm_cost_usd": 1000.0}]
+    findings = _run_rule("jobs_on_all_purpose", rows)
+    assert findings[0].attributed_cost_usd == pytest.approx(2000.0)
+    assert findings[0].monthly_waste_usd == pytest.approx(1000.0)  # 2000 * 0.5
