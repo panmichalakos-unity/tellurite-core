@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -18,6 +19,66 @@ _THEME_TEMPLATES = {
 }
 
 
+@dataclass
+class Summary:
+    """Presentation-time view over findings: separates dollar vs informational, and
+    de-duplicates overlap (one resource flagged by several rules shares the same spend)."""
+
+    dollar: list[Finding]  # waste > 0, ranked
+    info: list[Finding]  # waste <= 0 (governance / time-proxy) — shown separately
+    gross_waste_usd: float  # naive sum of dollar findings (overstates: overlaps)
+    dedup_waste_usd: float  # conservative: max recoverable per distinct resource
+    dedup_savings_pct: float | None
+    n_resources: int  # distinct resources with a dollar finding
+
+    @property
+    def n_high(self) -> int:
+        return sum(1 for f in self.dollar if f.severity == "high")
+
+    @property
+    def n_medium(self) -> int:
+        return sum(1 for f in self.dollar if f.severity == "medium")
+
+    @property
+    def n_low(self) -> int:
+        return sum(1 for f in self.dollar if f.severity == "low")
+
+
+def summarize(findings: list[Finding]) -> Summary:
+    """Split findings and compute a de-duplicated headline.
+
+    The same resource (instance_key) can be flagged by multiple rules, each estimating
+    recovery against the *same* underlying cost. Summing them overstates waste, so the
+    headline takes the **largest** estimate per resource (conservative). Findings with no
+    dollar impact (savings_model "0" — e.g. untagged spend, expensive-query time proxies)
+    are routed to an informational list, out of the dollar headline and count.
+    """
+    dollar = sorted(
+        (f for f in findings if f.monthly_waste_usd > 0),
+        key=lambda f: (-f.monthly_waste_usd, f.severity_rank),
+    )
+    info = [f for f in findings if f.monthly_waste_usd <= 0]
+    gross = sum(f.monthly_waste_usd for f in dollar)
+
+    rep: dict[str, Finding] = {}  # representative (max-waste) finding per resource
+    for f in dollar:
+        cur = rep.get(f.instance_key)
+        if cur is None or f.monthly_waste_usd > cur.monthly_waste_usd:
+            rep[f.instance_key] = f
+    dedup = sum(f.monthly_waste_usd for f in rep.values())
+    dedup_attr = sum(f.attributed_cost_usd or 0.0 for f in rep.values())
+    dedup_pct = (dedup / dedup_attr) if dedup_attr else None
+
+    return Summary(
+        dollar=dollar,
+        info=info,
+        gross_waste_usd=gross,
+        dedup_waste_usd=dedup,
+        dedup_savings_pct=dedup_pct,
+        n_resources=len(rep),
+    )
+
+
 def render_html(
     findings: list[Finding],
     lookback_days: int,
@@ -32,22 +93,23 @@ def render_html(
         autoescape=select_autoescape(["html", "j2"]),
     )
     template = env.get_template(_THEME_TEMPLATES.get(theme, _THEME_TEMPLATES["basic"]))
-    total_waste = sum(f.monthly_waste_usd for f in findings)
-    total_attributed = sum(f.attributed_cost_usd or 0.0 for f in findings)
-    total_pct = (total_waste / total_attributed) if total_attributed else None
+    s = summarize(findings)
 
     ctx = {
-        "findings": findings,
-        "total_waste_usd": total_waste,
-        "total_savings_pct": total_pct,
+        "findings": s.dollar,  # the dollar report
+        "info_findings": s.info,
+        "total_waste_usd": s.dedup_waste_usd,  # de-duplicated, conservative
+        "gross_waste_usd": s.gross_waste_usd,
+        "n_resources": s.n_resources,
+        "total_savings_pct": s.dedup_savings_pct,
         "show_savings_pct": show_savings_pct,
         "lookback_days": lookback_days,
         "currency": currency,
         "discount_pct": discount_pct,
         "generated_at": datetime.now(UTC).strftime("%Y-%m-%d"),
-        "n_high": sum(1 for f in findings if f.severity == "high"),
-        "n_medium": sum(1 for f in findings if f.severity == "medium"),
-        "n_low": sum(1 for f in findings if f.severity == "low"),
+        "n_high": s.n_high,
+        "n_medium": s.n_medium,
+        "n_low": s.n_low,
     }
     if theme == "corona":
         # Inline the vendored Corona stylesheet so the report is a single offline file.

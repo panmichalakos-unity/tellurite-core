@@ -15,7 +15,7 @@ from tellurite.config import load_profile
 from tellurite.connector import ConnectorConfig, DatabricksConnector
 from tellurite.engine import load_rules, run
 from tellurite.pricing import load_price_catalog
-from tellurite.report import render_html
+from tellurite.report import render_html, summarize
 
 console = Console()
 
@@ -164,11 +164,16 @@ def run_cmd(
             price_catalog=catalog,
         )
 
-    total = sum(f.monthly_waste_usd for f in findings)
-    console.print(
-        f"\n[bold]{len(findings)} findings[/bold] — estimated monthly waste: "
-        f"[bold red]${total:,.0f}[/bold red]"
+    s = summarize(findings)
+    gross_note = (
+        f" (gross ${s.gross_waste_usd:,.0f})" if s.gross_waste_usd > s.dedup_waste_usd else ""
     )
+    console.print(
+        f"\n[bold]{len(s.dollar)} dollar findings[/bold] across {s.n_resources} resource(s) — "
+        f"est. recoverable [bold red]${s.dedup_waste_usd:,.0f}/mo[/bold red]{gross_note}"
+    )
+    if s.info:
+        console.print(f"[dim]+ {len(s.info)} informational (no $ estimate)[/dim]")
 
     out_path = Path(out)
     render_html(

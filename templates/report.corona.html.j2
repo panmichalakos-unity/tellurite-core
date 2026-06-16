@@ -63,7 +63,8 @@
               <div class="card">
                 <div class="card-body">
                   <h3 class="mb-0 text-danger">${{ "{:,.0f}".format(total_waste_usd) }}</h3>
-                  <h6 class="text-muted font-weight-normal">Est. monthly waste (full-TCO, list price)</h6>
+                  <h6 class="text-muted font-weight-normal">Est. recoverable / mo · {{ n_resources }} resource{{ '' if n_resources == 1 else 's' }}</h6>
+                  {% if gross_waste_usd > total_waste_usd %}<small class="text-muted">conservative; overlapping findings sum to ${{ "{:,.0f}".format(gross_waste_usd) }}</small>{% endif %}
                 </div>
               </div>
             </div>
@@ -79,7 +80,7 @@
               <div class="card">
                 <div class="card-body">
                   <h3 class="mb-0">{{ findings|length }}</h3>
-                  <h6 class="text-muted font-weight-normal">Findings</h6>
+                  <h6 class="text-muted font-weight-normal">Dollar findings{% if info_findings %} · {{ info_findings|length }} informational{% endif %}</h6>
                 </div>
               </div>
             </div>
@@ -154,6 +155,35 @@
             </div>
           </div>
 
+          <!-- Informational (no direct $) -->
+          {% if info_findings %}
+          <div class="row" id="informational">
+            <div class="col-12 grid-margin stretch-card">
+              <div class="card">
+                <div class="card-body">
+                  <h4 class="card-title">Informational <small class="text-muted">({{ info_findings|length }})</small></h4>
+                  <p class="text-muted mb-3">Governance gaps and tuning signals — no direct dollar estimate; review-only.</p>
+                  <div class="table-responsive">
+                    <table class="table table-hover">
+                      <thead><tr><th>Finding</th><th>Instance</th><th>Category</th><th>Note</th></tr></thead>
+                      <tbody>
+                        {% for f in info_findings %}
+                        <tr>
+                          <td>{{ f.title }}</td>
+                          <td><code>{{ f.instance_key }}</code></td>
+                          <td><span class="text-muted">{{ f.category }}</span></td>
+                          <td><small>{{ f.remediation.summary }}</small></td>
+                        </tr>
+                        {% endfor %}
+                      </tbody>
+                    </table>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+          {% endif %}
+
           <!-- Methodology -->
           <div class="row" id="methodology">
             <div class="col-12 grid-margin stretch-card">
@@ -164,6 +194,7 @@
                     <li><strong>Read-only:</strong> only <code>SELECT</code> on <code>system.*</code>. No business data accessed; nothing left the workspace.</li>
                     <li><strong>Full-TCO list-price basis</strong> (DBU + VM/infra). Your effective rate may be lower via private discounts{% if discount_pct %}; a {{ "{:.0f}".format(discount_pct * 100) }}% discount was applied{% endif %}.</li>
                     <li><strong>Savings %</strong> is discount-invariant — it holds even under promotional/negotiated pricing.</li>
+                    <li><strong>Overlap:</strong> a resource can match several rules that target the same spend. The headline takes the largest estimate per resource (conservative); per-rule findings below may overlap.</li>
                     <li><strong>Lookback:</strong> {{ lookback_days }} days. Monthly figures are extrapolated from this window.</li>
                     <li><strong>Confidence:</strong> high = direct $ evidence; medium = reliable heuristic; low = proxy requiring confirmation.</li>
                   </ul>

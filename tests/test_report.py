@@ -1,7 +1,24 @@
 """Report rendering tests (offline, synthetic findings)."""
 
 from tellurite.models import Finding, Remediation
-from tellurite.report import render_html
+from tellurite.report import render_html, summarize
+
+
+def _f(rule, inst, waste, attr=None, sev="medium"):
+    return Finding(
+        rule_id=rule,
+        title=rule,
+        category="compute_config",
+        severity=sev,
+        confidence="medium",
+        instance_key=inst,
+        monthly_waste_usd=waste,
+        attributed_cost_usd=attr,
+        savings_pct=(waste / attr if attr else None),
+        evidence={},
+        remediation=Remediation(summary="fix"),
+    )
+
 
 _FINDINGS = [
     Finding(
@@ -52,3 +69,32 @@ def test_corona_handles_none_savings_pct():
     # The untagged (savings_pct=None) finding must render the em-dash, not crash.
     html = render_html(_FINDINGS, lookback_days=30, theme="corona")
     assert "Untagged spend" in html
+
+
+# ---------------------------------------------------------------------------
+# summarize() — informational split + per-resource de-duplication
+# ---------------------------------------------------------------------------
+
+
+def test_summarize_splits_informational():
+    s = summarize([_f("a", "c1", 100.0, 200.0), _f("expensive_long_queries", "q1", 0.0)])
+    assert [f.rule_id for f in s.dollar] == ["a"]
+    assert [f.rule_id for f in s.info] == ["expensive_long_queries"]
+
+
+def test_summarize_dedups_same_resource():
+    # cluster c1 flagged by 3 rules → headline = max per resource, not the sum.
+    findings = [
+        _f("vm_family_mismatch", "c1", 148.0, 1000.0),
+        _f("missing_auto_termination", "c1", 80.0, 1000.0),
+        _f("over_provisioned_autoscale", "c2", 73.0, 500.0),
+    ]
+    s = summarize(findings)
+    assert s.gross_waste_usd == 301.0
+    assert s.dedup_waste_usd == 221.0  # 148 (c1 max) + 73 (c2)
+    assert s.n_resources == 2
+
+
+def test_summarize_dollar_ranked_desc():
+    s = summarize([_f("a", "c1", 50.0, 100.0), _f("b", "c2", 500.0, 1000.0)])
+    assert [f.instance_key for f in s.dollar] == ["c2", "c1"]
