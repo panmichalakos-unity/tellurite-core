@@ -214,24 +214,89 @@ rules:
 
   # ---------------------------------------------------------------------------
   - id: over_provisioned_autoscale
-    title: "Over-provisioned autoscaling clusters"
+    title: "Oversized / over-provisioned clusters (low utilization)"
     category: compute_config
     severity: medium
-    confidence: low
-    summary: "Clusters with high max autoscale workers relative to actual utilization."
-    signal_tables: [system.compute.clusters, system.billing.usage]
-    # STATUS: stub — heuristic, low confidence. Latest cfg max_autoscale_workers high + high cost,
-    # cross-referenced with utilization proxy. Flag for manual right-sizing review.
+    confidence: medium
+    summary: "Clusters whose real worker CPU utilization is low — candidates to downsize."
+    signal_tables: [system.compute.node_timeline, system.compute.clusters, system.billing.usage]
+    parameters:
+      min_metric_samples: 10        # require real node_timeline data (never fabricate)
+      oversized_cpu_pct: 35         # avg worker CPU below this = oversized
+      severely_oversized_cpu_pct: 20
+      oversized_factor: 0.25        # recoverable share when oversized
+      severely_factor: 0.40         # recoverable share when severely oversized
+    # Full-TCO: returns dbu_cost_usd + vm_* columns; engine adds VM cost and assembles
+    # list_cost_usd. rightsizing_factor (tiered, in SQL) drives the savings model.
+    # Requires real node_timeline metrics — clusters without enough samples are dropped.
     detection_sql: |
-      -- TODO(claude-code): latest cluster cfg where max_autoscale_workers >= :max_workers_threshold
-      -- joined to cluster cost; ORDER BY list_cost_usd DESC.
-      SELECT NULL AS cluster_id, CAST(NULL AS DOUBLE) AS list_cost_usd WHERE 1=0
-    savings_model: "list_cost_usd * 0.1"
+      WITH util AS (
+        SELECT
+          cluster_id,
+          AVG(CASE WHEN driver = 'false' THEN cpu_user_percent END) AS avg_worker_cpu,
+          AVG(CASE WHEN driver = 'false' THEN mem_used_percent END) AS avg_worker_mem,
+          MAX(CASE WHEN driver = 'false' THEN cpu_user_percent END) AS peak_worker_cpu,
+          SUM(CASE WHEN driver = 'true'
+              THEN unix_timestamp(end_time) - unix_timestamp(start_time) ELSE 0 END) / 3600.0
+            AS driver_hours,
+          COUNT(*) AS metric_samples
+        FROM system.compute.node_timeline
+        WHERE start_time >= DATE_SUB(current_date(), :lookback_days)
+        GROUP BY cluster_id
+      ),
+      cfg AS (
+        SELECT cluster_id, cluster_name, driver_node_type, worker_node_type, worker_count
+        FROM (
+          SELECT cluster_id, cluster_name, driver_node_type, worker_node_type,
+                 COALESCE(worker_count, min_autoscale_workers, 0) AS worker_count,
+                 ROW_NUMBER() OVER (PARTITION BY cluster_id ORDER BY change_time DESC) AS rn
+          FROM system.compute.clusters
+        ) WHERE rn = 1
+      ),
+      cost AS (
+        SELECT
+          u.usage_metadata.cluster_id AS cluster_id,
+          SUM(u.usage_quantity * COALESCE(lp.pricing.promotional.default, lp.pricing.effective_list.default)) AS dbu_cost_usd
+        FROM system.billing.usage u
+        JOIN system.billing.list_prices lp
+          ON  u.sku_name = lp.sku_name
+          AND u.usage_end_time >= lp.price_start_time
+          AND (lp.price_end_time IS NULL OR u.usage_end_time < lp.price_end_time)
+        WHERE u.usage_date >= DATE_SUB(current_date(), :lookback_days)
+          AND u.usage_metadata.cluster_id IS NOT NULL
+        GROUP BY 1
+      )
+      SELECT
+        co.cluster_id,
+        cf.cluster_name,
+        cf.driver_node_type                          AS vm_node_type,
+        CASE WHEN cf.worker_count > 0 THEN cf.worker_node_type END AS vm_worker_node_type,
+        cf.worker_count                              AS vm_worker_count,
+        ut.driver_hours                              AS vm_runtime_hours,
+        co.dbu_cost_usd,
+        ROUND(ut.avg_worker_cpu, 1)                  AS avg_worker_cpu,
+        ROUND(ut.avg_worker_mem, 1)                  AS avg_worker_mem,
+        ROUND(ut.peak_worker_cpu, 1)                 AS peak_worker_cpu,
+        ut.metric_samples,
+        CASE
+          WHEN ut.avg_worker_cpu < :severely_oversized_cpu_pct THEN :severely_factor
+          WHEN ut.avg_worker_cpu < :oversized_cpu_pct          THEN :oversized_factor
+          ELSE 0
+        END                                          AS rightsizing_factor
+      FROM cost co
+      JOIN util ut USING (cluster_id)
+      JOIN cfg  cf USING (cluster_id)
+      WHERE ut.metric_samples >= :min_metric_samples
+        AND ut.avg_worker_cpu IS NOT NULL
+        AND ut.avg_worker_cpu < :oversized_cpu_pct
+      ORDER BY co.dbu_cost_usd DESC
+    savings_model: "list_cost_usd * rightsizing_factor"
     remediation:
-      summary: "Cap autoscale max; right-size based on observed concurrency."
-      pr_hint: "Lower max_workers in the cluster/policy definition."
+      summary: "Downsize the cluster (fewer/smaller workers) or lower autoscale max to match real CPU."
+      pr_hint: "Reduce num_workers / autoscale.max_workers, or pick a smaller node type, in the cluster/policy spec."
     references:
       - https://docs.databricks.com/aws/en/admin/system-tables/compute
+    # NOTE: verify node_timeline column names (driver/cpu_user_percent) and clusters.change_time at runtime.
 
   # ---------------------------------------------------------------------------
   - id: over_frequent_schedules
@@ -338,3 +403,104 @@ rules:
       pr_hint: "Add incremental materialization + unique_key; backfill once, then merge."
     references:
       - https://docs.databricks.com/aws/en/admin/system-tables/
+
+  # ---------------------------------------------------------------------------
+  - id: vm_family_mismatch
+    title: "VM family / generation mismatch"
+    category: compute_config
+    severity: medium
+    confidence: medium
+    summary: "Clusters on the wrong VM family for their workload, or on an older generation."
+    signal_tables: [system.compute.node_timeline, system.compute.clusters, system.billing.usage]
+    parameters:
+      min_metric_samples: 10
+      low_mem_pct: 40                 # memory-optimized but using < this much memory = wrong family
+      family_switch_factor: 0.20      # est. saving switching memory-opt → general purpose
+      generation_upgrade_factor: 0.15 # est. saving upgrading an older VM generation (v2/v3)
+    # Full-TCO right-sizing (rule 12). Reuses node_timeline utilization + node-type
+    # classification (E/M=memory, F=compute, D=general, L=storage; v2/v3 = older gen).
+    # Requires real node_timeline metrics — clusters without enough samples are dropped.
+    detection_sql: |
+      WITH util AS (
+        SELECT
+          cluster_id,
+          AVG(CASE WHEN driver = 'false' THEN mem_used_percent END) AS avg_worker_mem,
+          SUM(CASE WHEN driver = 'true'
+              THEN unix_timestamp(end_time) - unix_timestamp(start_time) ELSE 0 END) / 3600.0
+            AS driver_hours,
+          COUNT(*) AS metric_samples
+        FROM system.compute.node_timeline
+        WHERE start_time >= DATE_SUB(current_date(), :lookback_days)
+        GROUP BY cluster_id
+      ),
+      cfg AS (
+        SELECT cluster_id, cluster_name, driver_node_type, worker_node_type, worker_count
+        FROM (
+          SELECT cluster_id, cluster_name, driver_node_type, worker_node_type,
+                 COALESCE(worker_count, min_autoscale_workers, 0) AS worker_count,
+                 ROW_NUMBER() OVER (PARTITION BY cluster_id ORDER BY change_time DESC) AS rn
+          FROM system.compute.clusters
+        ) WHERE rn = 1
+      ),
+      cost AS (
+        SELECT
+          u.usage_metadata.cluster_id AS cluster_id,
+          SUM(u.usage_quantity * COALESCE(lp.pricing.promotional.default, lp.pricing.effective_list.default)) AS dbu_cost_usd
+        FROM system.billing.usage u
+        JOIN system.billing.list_prices lp
+          ON  u.sku_name = lp.sku_name
+          AND u.usage_end_time >= lp.price_start_time
+          AND (lp.price_end_time IS NULL OR u.usage_end_time < lp.price_end_time)
+        WHERE u.usage_date >= DATE_SUB(current_date(), :lookback_days)
+          AND u.usage_metadata.cluster_id IS NOT NULL
+        GROUP BY 1
+      ),
+      classified AS (
+        SELECT
+          co.cluster_id,
+          cf.cluster_name,
+          cf.driver_node_type                          AS vm_node_type,
+          CASE WHEN cf.worker_count > 0 THEN cf.worker_node_type END AS vm_worker_node_type,
+          cf.worker_count                              AS vm_worker_count,
+          ut.driver_hours                              AS vm_runtime_hours,
+          co.dbu_cost_usd,
+          ROUND(ut.avg_worker_mem, 1)                  AS avg_worker_mem,
+          ut.metric_samples,
+          CASE
+            WHEN cf.driver_node_type LIKE 'Standard_E%' OR cf.driver_node_type LIKE 'Standard_M%' THEN 'memory_optimized'
+            WHEN cf.driver_node_type LIKE 'Standard_F%' THEN 'compute_optimized'
+            WHEN cf.driver_node_type LIKE 'Standard_D%' THEN 'general_purpose'
+            WHEN cf.driver_node_type LIKE 'Standard_L%' THEN 'storage_optimized'
+            ELSE 'other'
+          END AS vm_family,
+          CASE
+            WHEN cf.driver_node_type LIKE '%v2%' THEN 'v2'
+            WHEN cf.driver_node_type LIKE '%v3%' THEN 'v3'
+            WHEN cf.driver_node_type LIKE '%v4%' THEN 'v4'
+            WHEN cf.driver_node_type LIKE '%v5%' THEN 'v5'
+            ELSE 'unknown'
+          END AS vm_generation
+        FROM cost co
+        JOIN util ut USING (cluster_id)
+        JOIN cfg  cf USING (cluster_id)
+        WHERE ut.metric_samples >= :min_metric_samples
+      )
+      SELECT
+        *,
+        CASE
+          WHEN vm_family = 'memory_optimized' AND avg_worker_mem IS NOT NULL
+               AND avg_worker_mem < :low_mem_pct THEN :family_switch_factor
+          WHEN vm_generation IN ('v2', 'v3') THEN :generation_upgrade_factor
+          ELSE 0
+        END AS family_factor
+      FROM classified
+      WHERE (vm_family = 'memory_optimized' AND avg_worker_mem < :low_mem_pct)
+         OR vm_generation IN ('v2', 'v3')
+      ORDER BY dbu_cost_usd DESC
+    savings_model: "list_cost_usd * family_factor"
+    remediation:
+      summary: "Switch memory-optimized clusters with low memory use to general-purpose, and upgrade older VM generations (v3→v4/v5)."
+      pr_hint: "Change node_type_id to a better-fit family / newer generation in the cluster/policy spec."
+    references:
+      - https://docs.databricks.com/aws/en/admin/system-tables/compute
+    # NOTE: family/generation heuristics are Azure node-name based; verify node naming at runtime.

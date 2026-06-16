@@ -275,6 +275,60 @@ def test_vm_cost_noop_without_catalog_or_columns():
     assert "vm_cost_usd" not in _with_vm_cost({"dbu_cost_usd": 10.0}, _CATALOG)
 
 
+def test_golden_over_provisioned_autoscale():
+    """Rule 6: rightsizing_factor (from SQL) × full-TCO basis = waste; VM cost folded in."""
+    # avg_worker_cpu 15 → severely oversized → factor 0.40 (set by the rule's SQL CASE).
+    rows = [
+        {
+            "cluster_id": "c1",
+            "cluster_name": "etl",
+            "vm_node_type": "Standard_E8_v3",  # 1.0/hr
+            "vm_worker_node_type": None,
+            "vm_worker_count": 0,
+            "vm_runtime_hours": 1000.0,  # VM = 1000
+            "dbu_cost_usd": 1000.0,
+            "avg_worker_cpu": 15.0,
+            "metric_samples": 200,
+            "rightsizing_factor": 0.40,
+        }
+    ]
+    findings = run(
+        _FakeConnector(rows),
+        [_make_rule("over_provisioned_autoscale")],
+        lookback_days=30,
+        min_cost_usd=50,
+        price_catalog=_CATALOG,
+    )
+    assert findings[0].attributed_cost_usd == pytest.approx(2000.0)  # 1000 dbu + 1000 vm
+    assert findings[0].monthly_waste_usd == pytest.approx(800.0)  # 2000 * 0.40
+    assert findings[0].savings_pct == pytest.approx(0.40)
+
+
+def test_golden_vm_family_mismatch():
+    """Rule 12: family_factor from SQL drives savings on the full-TCO basis."""
+    rows = [
+        {
+            "cluster_id": "c2",
+            "vm_node_type": "Standard_E8_v3",
+            "vm_worker_count": 0,
+            "vm_runtime_hours": 100.0,  # VM = 100
+            "dbu_cost_usd": 900.0,
+            "vm_family": "memory_optimized",
+            "avg_worker_mem": 20.0,
+            "family_factor": 0.20,
+        }
+    ]
+    findings = run(
+        _FakeConnector(rows),
+        [_make_rule("vm_family_mismatch")],
+        lookback_days=30,
+        min_cost_usd=50,
+        price_catalog=_CATALOG,
+    )
+    assert findings[0].attributed_cost_usd == pytest.approx(1000.0)  # 900 + 100
+    assert findings[0].monthly_waste_usd == pytest.approx(200.0)  # 1000 * 0.20
+
+
 def test_run_folds_vm_cost_into_basis():
     """Full path: rule returns DBU + structural cols; engine adds VM → list_cost_usd."""
     rows = [
