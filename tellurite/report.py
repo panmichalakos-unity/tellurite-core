@@ -12,6 +12,7 @@ from tellurite.models import Finding
 
 _TEMPLATES_DIR = Path(__file__).parent.parent / "templates"
 _CORONA_CSS = _TEMPLATES_DIR / "corona" / "css" / "style.css"
+_CORONA_FONTS = _TEMPLATES_DIR / "corona" / "css" / "fonts.css"  # base64 Rubik @font-face
 
 _THEME_TEMPLATES = {
     "basic": "report.html.j2",
@@ -30,6 +31,7 @@ class Summary:
     dedup_waste_usd: float  # conservative: max recoverable per distinct resource
     dedup_savings_pct: float | None
     n_resources: int  # distinct resources with a dollar finding
+    by_rule: list[tuple[str, float]]  # (rule title, summed dollar waste), ranked desc
 
     @property
     def n_high(self) -> int:
@@ -69,6 +71,11 @@ def summarize(findings: list[Finding]) -> Summary:
     dedup_attr = sum(f.attributed_cost_usd or 0.0 for f in rep.values())
     dedup_pct = (dedup / dedup_attr) if dedup_attr else None
 
+    by_rule_map: dict[str, float] = {}
+    for f in dollar:
+        by_rule_map[f.title] = by_rule_map.get(f.title, 0.0) + f.monthly_waste_usd
+    by_rule = sorted(by_rule_map.items(), key=lambda kv: -kv[1])
+
     return Summary(
         dollar=dollar,
         info=info,
@@ -76,6 +83,7 @@ def summarize(findings: list[Finding]) -> Summary:
         dedup_waste_usd=dedup,
         dedup_savings_pct=dedup_pct,
         n_resources=len(rep),
+        by_rule=by_rule,
     )
 
 
@@ -110,10 +118,15 @@ def render_html(
         "n_high": s.n_high,
         "n_medium": s.n_medium,
         "n_low": s.n_low,
+        "by_rule": s.by_rule,
+        "by_rule_max": max((w for _, w in s.by_rule), default=0.0),
     }
     if theme == "corona":
-        # Inline the vendored Corona stylesheet so the report is a single offline file.
-        ctx["corona_css"] = _CORONA_CSS.read_text(encoding="utf-8")
+        # Inline the vendored Corona stylesheet + embedded fonts → single offline file.
+        css = _CORONA_CSS.read_text(encoding="utf-8")
+        if _CORONA_FONTS.exists():
+            css += "\n" + _CORONA_FONTS.read_text(encoding="utf-8")
+        ctx["corona_css"] = css
 
     html = template.render(**ctx)
     if out_path:

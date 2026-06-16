@@ -15,8 +15,14 @@
     /* Tellurite tweaks on top of Corona */
     .tl-brand { font-weight: 700; letter-spacing: .04em; }
     .tl-brand small { color: #6c7293; font-weight: 400; }
-    .evidence { font-family: monospace; font-size: .75rem; white-space: pre-wrap; color: #b8bccc; }
+    .evidence { font-family: monospace; font-size: .75rem; white-space: pre-wrap; color: #b8bccc;
+                background: rgba(0,0,0,.2); padding: .6rem .8rem; border-radius: 4px; }
     .table td, .table th { vertical-align: middle; }
+    .tl-detail { border: 1px solid rgba(255,255,255,.08); border-radius: 4px; margin-bottom: .5rem; }
+    .tl-detail > summary { cursor: pointer; padding: .6rem .9rem; list-style: none; }
+    .tl-detail > summary::-webkit-details-marker { display: none; }
+    .tl-detail[open] > summary { border-bottom: 1px solid rgba(255,255,255,.08); }
+    .tl-detail-body { padding: .8rem .9rem; }
   </style>
 </head>
 <body>
@@ -29,9 +35,15 @@
       </div>
       <ul class="nav">
         <li class="nav-item nav-category">Cost Audit</li>
-        <li class="nav-item"><a class="nav-link" href="#overview"><span class="menu-title">Overview</span></a></li>
-        <li class="nav-item"><a class="nav-link" href="#findings"><span class="menu-title">Findings</span></a></li>
-        <li class="nav-item"><a class="nav-link" href="#methodology"><span class="menu-title">Methodology</span></a></li>
+        <li class="nav-item"><a class="nav-link" href="#overview">
+          <span class="menu-icon"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/></svg></span>
+          <span class="menu-title">Overview</span></a></li>
+        <li class="nav-item"><a class="nav-link" href="#findings">
+          <span class="menu-icon"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg></span>
+          <span class="menu-title">Findings</span></a></li>
+        <li class="nav-item"><a class="nav-link" href="#methodology">
+          <span class="menu-icon"><svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg></span>
+          <span class="menu-title">Methodology</span></a></li>
       </ul>
     </nav>
     <!-- /sidebar -->
@@ -62,7 +74,14 @@
             <div class="col-xl-3 col-sm-6 grid-margin stretch-card">
               <div class="card">
                 <div class="card-body">
-                  <h3 class="mb-0 text-danger">${{ "{:,.0f}".format(total_waste_usd) }}</h3>
+                  <div class="row">
+                    <div class="col-9">
+                      <h3 class="mb-0 text-danger">${{ "{:,.0f}".format(total_waste_usd) }}</h3>
+                    </div>
+                    <div class="col-3 text-right">
+                      <div class="icon icon-box-danger"><span class="icon-item"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="12" y1="1" x2="12" y2="23"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg></span></div>
+                    </div>
+                  </div>
                   <h6 class="text-muted font-weight-normal">Est. recoverable / mo · {{ n_resources }} resource{{ '' if n_resources == 1 else 's' }}</h6>
                   {% if gross_waste_usd > total_waste_usd %}<small class="text-muted">conservative; overlapping findings sum to ${{ "{:,.0f}".format(gross_waste_usd) }}</small>{% endif %}
                 </div>
@@ -71,7 +90,14 @@
             <div class="col-xl-3 col-sm-6 grid-margin stretch-card">
               <div class="card">
                 <div class="card-body">
-                  <h3 class="mb-0">{% if total_savings_pct is not none %}{{ "{:.0f}".format(total_savings_pct * 100) }}%{% else %}—{% endif %}</h3>
+                  <div class="row">
+                    <div class="col-9">
+                      <h3 class="mb-0">{% if total_savings_pct is not none %}{{ "{:.0f}".format(total_savings_pct * 100) }}%{% else %}—{% endif %}</h3>
+                    </div>
+                    <div class="col-3 text-right">
+                      <div class="icon icon-box-success"><span class="icon-item"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="19" y1="5" x2="5" y2="19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/></svg></span></div>
+                    </div>
+                  </div>
                   <h6 class="text-muted font-weight-normal">Of attributed spend (discount-invariant)</h6>
                 </div>
               </div>
@@ -79,7 +105,14 @@
             <div class="col-xl-3 col-sm-6 grid-margin stretch-card">
               <div class="card">
                 <div class="card-body">
-                  <h3 class="mb-0">{{ findings|length }}</h3>
+                  <div class="row">
+                    <div class="col-9">
+                      <h3 class="mb-0">{{ findings|length }}</h3>
+                    </div>
+                    <div class="col-3 text-right">
+                      <div class="icon icon-box-info"><span class="icon-item"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="8" y1="6" x2="21" y2="6"/><line x1="8" y1="12" x2="21" y2="12"/><line x1="8" y1="18" x2="21" y2="18"/><line x1="3" y1="6" x2="3.01" y2="6"/><line x1="3" y1="12" x2="3.01" y2="12"/><line x1="3" y1="18" x2="3.01" y2="18"/></svg></span></div>
+                    </div>
+                  </div>
                   <h6 class="text-muted font-weight-normal">Dollar findings{% if info_findings %} · {{ info_findings|length }} informational{% endif %}</h6>
                 </div>
               </div>
@@ -87,15 +120,45 @@
             <div class="col-xl-3 col-sm-6 grid-margin stretch-card">
               <div class="card">
                 <div class="card-body">
-                  <h3 class="mb-0">
-                    <span class="text-danger">{{ n_high }}</span>
-                    <small class="text-muted"> / {{ n_medium }} / {{ n_low }}</small>
-                  </h3>
+                  <div class="row">
+                    <div class="col-9">
+                      <h3 class="mb-0"><span class="text-danger">{{ n_high }}</span><small class="text-muted"> / {{ n_medium }} / {{ n_low }}</small></h3>
+                    </div>
+                    <div class="col-3 text-right">
+                      <div class="icon icon-box-warning"><span class="icon-item"><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg></span></div>
+                    </div>
+                  </div>
                   <h6 class="text-muted font-weight-normal">High / Medium / Low severity</h6>
                 </div>
               </div>
             </div>
           </div>
+
+          <!-- Recoverable by rule (pure-CSS bar chart) -->
+          {% if by_rule %}
+          <div class="row">
+            <div class="col-12 grid-margin stretch-card">
+              <div class="card">
+                <div class="card-body">
+                  <h4 class="card-title">Recoverable by rule</h4>
+                  <p class="text-muted mb-3">Gross monthly $ contributed by each rule (before per-resource de-duplication).</p>
+                  {% for title, amt in by_rule %}
+                  <div class="mb-3">
+                    <div class="d-flex justify-content-between mb-1">
+                      <small>{{ title }}</small>
+                      <small class="font-weight-medium">${{ "{:,.0f}".format(amt) }}</small>
+                    </div>
+                    <div class="progress" style="height:10px">
+                      <div class="progress-bar bg-info" role="progressbar"
+                           style="width: {{ [(amt / by_rule_max * 100) if by_rule_max else 0, 100] | min }}%"></div>
+                    </div>
+                  </div>
+                  {% endfor %}
+                </div>
+              </div>
+            </div>
+          </div>
+          {% endif %}
 
           <!-- Findings table -->
           <div class="row" id="findings">
@@ -154,6 +217,40 @@
               </div>
             </div>
           </div>
+
+          <!-- Per-finding detail / evidence -->
+          {% if findings %}
+          <div class="row" id="detail">
+            <div class="col-12 grid-margin stretch-card">
+              <div class="card">
+                <div class="card-body">
+                  <h4 class="card-title">Finding details</h4>
+                  <p class="text-muted mb-3">Evidence and the recommended fix for each finding. Click to expand.</p>
+                  {% for f in findings %}
+                  <details class="tl-detail">
+                    <summary>
+                      <span class="font-weight-medium">{{ loop.index }}. {{ f.title }}</span>
+                      <code class="ml-2">{{ f.instance_key }}</code>
+                      {{ sev_badge(f.severity) }}
+                      <span class="float-right font-weight-medium text-danger">${{ "{:,.0f}".format(f.monthly_waste_usd) }}/mo</span>
+                    </summary>
+                    <div class="tl-detail-body">
+                      <p class="mb-1"><strong>Fix:</strong> {{ f.remediation.summary }}</p>
+                      {% if f.remediation.pr_hint %}<p class="text-muted mb-2"><em>{{ f.remediation.pr_hint }}</em></p>{% endif %}
+                      <p class="text-muted mb-1">
+                        Confidence: {{ f.confidence }} ·
+                        {% if f.attributed_cost_usd is not none %}attributed ${{ "{:,.0f}".format(f.attributed_cost_usd) }}/mo{% endif %}
+                        {% if f.savings_pct is not none %} · savings {{ "{:.0f}".format(f.savings_pct * 100) }}%{% endif %}
+                      </p>
+                      <pre class="evidence mb-0">{{ f.evidence | tojson(indent=2) }}</pre>
+                    </div>
+                  </details>
+                  {% endfor %}
+                </div>
+              </div>
+            </div>
+          </div>
+          {% endif %}
 
           <!-- Informational (no direct $) -->
           {% if info_findings %}
