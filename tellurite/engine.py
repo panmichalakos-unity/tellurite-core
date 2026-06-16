@@ -11,8 +11,16 @@ import yaml
 
 from tellurite.connector import DatabricksConnector
 from tellurite.models import Finding, Rule
+from tellurite.pricing import PriceCatalog
 
 logger = logging.getLogger(__name__)
+
+# Standard columns a rule's detection_sql MAY return so the engine can attach VM/infra
+# cost (full-TCO, §6). All optional; absent → no VM cost added for that finding.
+#   vm_node_type        driver/primary node type (e.g. Standard_E8_v3)
+#   vm_worker_node_type worker node type (None/absent → single-node)
+#   vm_worker_count     number of workers (default 0)
+#   vm_runtime_hours    hours the cluster ran in the window
 
 _RULES_DIR = Path(__file__).parent.parent / "rules"
 
@@ -39,6 +47,7 @@ def run(
     lookback_days: int = 30,
     min_cost_usd: float = 50.0,
     discount_pct: float = 0.0,
+    price_catalog: PriceCatalog | None = None,
 ) -> list[Finding]:
     """Execute each rule and return ranked Findings (highest waste first)."""
     findings: list[Finding] = []
@@ -58,6 +67,7 @@ def run(
             continue
 
         for row in rows:
+            row = _with_vm_cost(row, price_catalog)
             row = _with_total_cost(row)
             waste = _eval_savings(rule.savings_model, row, params)
             if waste < min_cost_usd and rule.savings_model != "0":
@@ -84,6 +94,31 @@ def run(
 
     findings.sort(key=lambda f: (-f.monthly_waste_usd, f.severity_rank))
     return findings
+
+
+def _with_vm_cost(row: dict[str, Any], catalog: PriceCatalog | None) -> dict[str, Any]:
+    """Attach `vm_cost_usd` from the price catalog × the row's structural columns (§6).
+
+    Generic, keyed on the documented vm_* columns — no rule-specific logic. A node type
+    the catalog can't price contributes 0 and sets `vm_priced=False` in the evidence
+    (the figure is then understated, never fabricated — SPEC §5/§6).
+    """
+    if catalog is None or "vm_node_type" not in row:
+        return row
+    hours = float(row.get("vm_runtime_hours") or 0.0)
+    if hours <= 0:
+        return row
+
+    driver_price = catalog.vm_hourly(row.get("vm_node_type"))
+    worker_type = row.get("vm_worker_node_type")
+    worker_count = int(row.get("vm_worker_count") or 0)
+    worker_price = catalog.vm_hourly(worker_type) if worker_type else None
+
+    vm_cost = (driver_price or 0.0) * hours + (worker_price or 0.0) * worker_count * hours
+    priced = driver_price is not None and not (
+        worker_type and worker_count > 0 and worker_price is None
+    )
+    return {**row, "vm_cost_usd": vm_cost, "vm_priced": priced}
 
 
 def _with_total_cost(row: dict[str, Any]) -> dict[str, Any]:

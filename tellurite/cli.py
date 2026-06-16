@@ -14,6 +14,7 @@ from tellurite import __version__
 from tellurite.config import load_profile
 from tellurite.connector import ConnectorConfig, DatabricksConnector
 from tellurite.engine import load_rules, run
+from tellurite.pricing import load_price_catalog
 from tellurite.report import render_html
 
 console = Console()
@@ -65,6 +66,12 @@ def cli() -> None:
     default=None,
     help="Show the discount-invariant savings %% inline (default on)",
 )
+@click.option(
+    "--no-price-fetch",
+    "no_price_fetch",
+    is_flag=True,
+    help="Use the bundled fallback VM price table instead of fetching the live catalog",
+)
 @click.option("--out", default="report.html", show_default=True, help="Output file path")
 @click.option("--rules-dir", default=None, type=click.Path(), help="Override rules directory")
 @click.option("--json-out", is_flag=True, help="Also emit findings as JSON")
@@ -82,6 +89,7 @@ def run_cmd(
     discount_pct: float | None,
     currency: str | None,
     show_savings_pct: bool | None,
+    no_price_fetch: bool,
     out: str,
     rules_dir: str | None,
     json_out: bool,
@@ -116,6 +124,14 @@ def run_cmd(
         f"[bold]Loaded {len(rules)} rules.[/bold] Lookback: {prof.lookback_days}d · cloud: {prof.cloud}"
     )
 
+    catalog = load_price_catalog(
+        prof.cloud, prof.region, allow_fetch=not no_price_fetch, currency=prof.currency
+    )
+    console.print(
+        f"VM prices: [bold]{catalog.source}[/bold] "
+        f"({len(catalog.prices)} node types · {prof.cloud}/{prof.region or '—'})"
+    )
+
     with DatabricksConnector(config) as connector:
         if not connector.ping():
             console.print("[red]Connection check failed — aborting.[/red]")
@@ -127,6 +143,7 @@ def run_cmd(
             lookback_days=prof.lookback_days,
             min_cost_usd=prof.min_cost_usd,
             discount_pct=prof.discount_pct,
+            price_catalog=catalog,
         )
 
     total = sum(f.monthly_waste_usd for f in findings)

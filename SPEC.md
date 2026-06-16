@@ -143,7 +143,18 @@ references:
   - https://docs.databricks.com/aws/en/admin/system-tables/billing
 ```
 
-**The `list_cost_usd` a rule's `savings_model` sees is the full-TCO total** that the engine assembles (`dbu_cost_usd + vm_cost_usd`, §6) — **not** a column the rule SQL must compute itself (*decided: Option A*). A rule's `detection_sql` returns its cost columns (e.g. `dbu_cost_usd`, and the VM inputs the engine needs); the engine adds VM cost and exposes the combined `list_cost_usd` to the savings-model evaluator. Rules therefore stay decoupled from the DBU/VM split and the YAML never changes when the VM-cost layer lands. (Until M1.5, `vm_cost_usd = 0`, so `list_cost_usd == dbu_cost_usd`.)
+**The `list_cost_usd` a rule's `savings_model` sees is the full-TCO total** that the engine assembles (`dbu_cost_usd + vm_cost_usd`, §6) — **not** a column the rule SQL must compute itself (*decided: Option A*). A rule's `detection_sql` returns its cost columns (e.g. `dbu_cost_usd`, and the VM inputs the engine needs); the engine adds VM cost and exposes the combined `list_cost_usd` to the savings-model evaluator. Rules therefore stay decoupled from the DBU/VM split and the YAML never changes when the VM-cost layer lands.
+
+**VM-cost columns (optional, for full-TCO):** a rule may return these well-known columns and the engine attaches `vm_cost_usd` from the price catalog (`pricing.py`) — generic, no rule-specific code:
+
+| Column | Meaning |
+|---|---|
+| `vm_node_type` | driver/primary node type (e.g. `Standard_E8_v3`) |
+| `vm_worker_node_type` | worker node type (absent → single-node) |
+| `vm_worker_count` | number of workers (default 0) |
+| `vm_runtime_hours` | hours the cluster ran in the window |
+
+`vm_cost_usd = price(driver)·hours + price(worker)·workers·hours`. A node type the catalog can't price contributes 0 and sets `vm_priced=false` in evidence — the figure is understated, **never fabricated** (§5). Rules that return none of these are DBU-only (`vm_cost_usd = 0`).
 
 Engine maps each detection row → `Finding{rule_id, instance_key, monthly_waste_usd, attributed_cost_usd, savings_pct, severity, confidence, evidence, remediation}` and ranks by `monthly_waste_usd`. `savings_pct = monthly_waste_usd / attributed_cost_usd` (the discount-invariant figure, §6); it is `None` for findings with no attributed $ basis (e.g. governance findings whose `savings_model` is `"0"`).
 

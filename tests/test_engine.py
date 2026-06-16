@@ -6,10 +6,21 @@ from tellurite.engine import (
     _eval_savings,
     _pick_instance_key,
     _with_total_cost,
+    _with_vm_cost,
     load_rules,
     run,
 )
 from tellurite.models import Remediation, Rule
+from tellurite.pricing import PriceCatalog
+
+_CATALOG = PriceCatalog(
+    "azure",
+    "northeurope",
+    "USD",
+    "fallback",
+    "t",
+    {"Standard_E8_v3": 1.0, "Standard_E4_v3": 0.5},
+)
 
 
 class _FakeConnector:
@@ -232,3 +243,56 @@ def test_golden_vm_cost_lifts_basis_and_waste():
     findings = _run_rule("jobs_on_all_purpose", rows)
     assert findings[0].attributed_cost_usd == pytest.approx(2000.0)
     assert findings[0].monthly_waste_usd == pytest.approx(1000.0)  # 2000 * 0.5
+
+
+# ---------------------------------------------------------------------------
+# VM-cost enrichment (M1.5b): catalog × structural columns → vm_cost_usd
+# ---------------------------------------------------------------------------
+
+
+def test_vm_cost_driver_plus_workers():
+    row = {
+        "vm_node_type": "Standard_E8_v3",  # 1.0/hr
+        "vm_worker_node_type": "Standard_E4_v3",  # 0.5/hr
+        "vm_worker_count": 4,
+        "vm_runtime_hours": 10.0,
+    }
+    out = _with_vm_cost(row, _CATALOG)
+    # driver 1.0*10 + workers 0.5*4*10 = 10 + 20 = 30
+    assert out["vm_cost_usd"] == pytest.approx(30.0)
+    assert out["vm_priced"] is True
+
+
+def test_vm_cost_missing_price_is_flagged_not_fabricated():
+    row = {"vm_node_type": "Standard_UNKNOWN", "vm_runtime_hours": 5.0}
+    out = _with_vm_cost(row, _CATALOG)
+    assert out["vm_cost_usd"] == 0.0  # unknown price contributes 0, not a guess
+    assert out["vm_priced"] is False  # flagged as understated
+
+
+def test_vm_cost_noop_without_catalog_or_columns():
+    assert "vm_cost_usd" not in _with_vm_cost({"vm_node_type": "Standard_E8_v3"}, None)
+    assert "vm_cost_usd" not in _with_vm_cost({"dbu_cost_usd": 10.0}, _CATALOG)
+
+
+def test_run_folds_vm_cost_into_basis():
+    """Full path: rule returns DBU + structural cols; engine adds VM → list_cost_usd."""
+    rows = [
+        {
+            "job_id": "a",
+            "dbu_cost_usd": 1000.0,
+            "vm_node_type": "Standard_E8_v3",  # 1.0/hr × 1000h = 1000
+            "vm_runtime_hours": 1000.0,
+        }
+    ]
+    findings = run(
+        _FakeConnector(rows),
+        [_make_rule("jobs_on_all_purpose")],
+        lookback_days=30,
+        min_cost_usd=50,
+        price_catalog=_CATALOG,
+    )
+    assert findings[0].attributed_cost_usd == pytest.approx(2000.0)  # 1000 dbu + 1000 vm
+    assert findings[0].monthly_waste_usd == pytest.approx(1000.0)  # 2000 * 0.5
+    assert findings[0].evidence["vm_cost_usd"] == pytest.approx(1000.0)
+    assert findings[0].evidence["vm_priced"] is True
