@@ -213,17 +213,19 @@ def test_golden_idle_sql_warehouses():
 
 
 def test_golden_missing_auto_termination():
+    # idle_fraction is now MEASURED (a column), not a flat param.
     rows = [
         {
             "cluster_id": "c1",
             "cluster_name": "interactive",
             "auto_termination_minutes": None,
             "dbu_cost_usd": 1000.0,
+            "idle_fraction": 0.30,
         }
     ]
     findings = _run_rule("missing_auto_termination", rows)
     assert findings[0].instance_key == "c1"
-    assert findings[0].monthly_waste_usd == pytest.approx(150.0)  # 1000 * 0.15
+    assert findings[0].monthly_waste_usd == pytest.approx(300.0)  # 1000 * measured 0.30
 
 
 def test_golden_untagged_spend_is_governance_finding():
@@ -305,7 +307,7 @@ def test_golden_over_provisioned_autoscale():
 
 
 def test_golden_vm_family_mismatch():
-    """Rule 12: family_factor from SQL drives savings on the full-TCO basis."""
+    """Memory-family switch: savings = full-TCO basis × family_switch_factor (param)."""
     rows = [
         {
             "cluster_id": "c2",
@@ -313,9 +315,7 @@ def test_golden_vm_family_mismatch():
             "vm_worker_count": 0,
             "vm_runtime_hours": 100.0,  # VM = 100
             "dbu_cost_usd": 900.0,
-            "vm_family": "memory_optimized",
             "avg_worker_mem": 20.0,
-            "family_factor": 0.20,
         }
     ]
     findings = run(
@@ -327,6 +327,29 @@ def test_golden_vm_family_mismatch():
     )
     assert findings[0].attributed_cost_usd == pytest.approx(1000.0)  # 900 + 100
     assert findings[0].monthly_waste_usd == pytest.approx(200.0)  # 1000 * 0.20
+
+
+def test_golden_vm_generation_outdated_low_confidence():
+    """Split-out generation rule: conservative factor (0.10), low confidence."""
+    rows = [
+        {
+            "cluster_id": "c3",
+            "vm_node_type": "Standard_E8_v3",
+            "vm_worker_count": 0,
+            "vm_runtime_hours": 100.0,  # VM = 100
+            "dbu_cost_usd": 900.0,
+            "vm_generation": "v3",
+        }
+    ]
+    findings = run(
+        _FakeConnector(rows),
+        [_make_rule("vm_generation_outdated")],
+        lookback_days=30,
+        min_cost_usd=50,
+        price_catalog=_CATALOG,
+    )
+    assert findings[0].monthly_waste_usd == pytest.approx(100.0)  # 1000 * 0.10
+    assert findings[0].confidence == "low"
 
 
 def test_run_folds_vm_cost_into_basis():

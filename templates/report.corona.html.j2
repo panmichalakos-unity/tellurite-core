@@ -223,24 +223,33 @@
               <div class="card">
                 <div class="card-body">
                   <h4 class="card-title">Finding details</h4>
-                  <p class="text-muted mb-3">Evidence and the recommended fix for each finding. Click to expand.</p>
-                  {% for f in findings %}
-                  <details class="tl-detail">
+                  <p class="text-muted mb-3">Grouped by resource. Each resource shows its recommendation(s); a resource with several findings is one thing to fix, so its recoverable is the largest estimate (not the sum).</p>
+                  {% for instance_key, group in resources %}
+                  {% set res_max = group | map(attribute='monthly_waste_usd') | max %}
+                  <details class="tl-detail"{% if loop.first %} open{% endif %}>
                     <summary>
-                      <span class="font-weight-medium">{{ loop.index }}. {{ f.title }}</span>
-                      <code class="ml-2">{{ f.instance_key }}</code>
-                      {{ sev_badge(f.severity) }}
-                      <span class="float-right font-weight-medium text-danger">${{ "{:,.0f}".format(f.monthly_waste_usd) }}/mo</span>
+                      <code>{{ instance_key }}</code>
+                      <span class="text-muted ml-2">{{ group|length }} finding{{ '' if group|length == 1 else 's' }}</span>
+                      <span class="float-right font-weight-medium text-danger">${{ "{:,.0f}".format(res_max) }}/mo recoverable</span>
                     </summary>
                     <div class="tl-detail-body">
-                      <p class="mb-1"><strong>Fix:</strong> {{ f.remediation.summary }}</p>
-                      {% if f.remediation.pr_hint %}<p class="text-muted mb-2"><em>{{ f.remediation.pr_hint }}</em></p>{% endif %}
-                      <p class="text-muted mb-1">
-                        Confidence: {{ f.confidence }} ·
-                        {% if f.attributed_cost_usd is not none %}attributed ${{ "{:,.0f}".format(f.attributed_cost_usd) }}/mo{% endif %}
-                        {% if f.savings_pct is not none %} · savings {{ "{:.0f}".format(f.savings_pct * 100) }}%{% endif %}
-                      </p>
-                      <pre class="evidence mb-0">{{ f.evidence | tojson(indent=2) }}</pre>
+                      {% for f in group %}
+                      <div class="{% if not loop.first %}mt-3 pt-3{% endif %}"{% if not loop.first %} style="border-top:1px solid rgba(255,255,255,.06)"{% endif %}>
+                        <p class="mb-1">
+                          <span class="font-weight-medium">{{ f.title }}</span>
+                          {{ sev_badge(f.severity) }}
+                          <span class="float-right text-muted">${{ "{:,.0f}".format(f.monthly_waste_usd) }}/mo</span>
+                        </p>
+                        <p class="mb-1"><strong>Fix:</strong> {{ f.remediation.summary }}</p>
+                        {% if f.remediation.pr_hint %}<p class="text-muted mb-2"><em>{{ f.remediation.pr_hint }}</em></p>{% endif %}
+                        <p class="text-muted mb-1">
+                          Confidence: {{ f.confidence }} ·
+                          {% if f.attributed_cost_usd is not none %}attributed ${{ "{:,.0f}".format(f.attributed_cost_usd) }}/mo{% endif %}
+                          {% if f.savings_pct is not none %} · savings {{ "{:.0f}".format(f.savings_pct * 100) }}%{% endif %}
+                        </p>
+                        <pre class="evidence mb-0">{{ f.evidence | tojson(indent=2) }}</pre>
+                      </div>
+                      {% endfor %}
                     </div>
                   </details>
                   {% endfor %}

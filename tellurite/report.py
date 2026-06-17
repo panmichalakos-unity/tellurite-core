@@ -32,6 +32,8 @@ class Summary:
     dedup_savings_pct: float | None
     n_resources: int  # distinct resources with a dollar finding
     by_rule: list[tuple[str, float]]  # (rule title, summed dollar waste), ranked desc
+    # (instance_key, its findings) grouped per resource, ranked by the resource's max waste
+    resources: list[tuple[str, list[Finding]]]
 
     @property
     def n_high(self) -> int:
@@ -76,6 +78,14 @@ def summarize(findings: list[Finding]) -> Summary:
         by_rule_map[f.title] = by_rule_map.get(f.title, 0.0) + f.monthly_waste_usd
     by_rule = sorted(by_rule_map.items(), key=lambda kv: -kv[1])
 
+    groups: dict[str, list[Finding]] = {}
+    for f in dollar:  # dollar is already ranked, so each group's list stays ranked
+        groups.setdefault(f.instance_key, []).append(f)
+    resources = sorted(
+        groups.items(),
+        key=lambda kv: -max(x.monthly_waste_usd for x in kv[1]),
+    )
+
     return Summary(
         dollar=dollar,
         info=info,
@@ -84,6 +94,7 @@ def summarize(findings: list[Finding]) -> Summary:
         dedup_savings_pct=dedup_pct,
         n_resources=len(rep),
         by_rule=by_rule,
+        resources=resources,
     )
 
 
@@ -120,6 +131,7 @@ def render_html(
         "n_low": s.n_low,
         "by_rule": s.by_rule,
         "by_rule_max": max((w for _, w in s.by_rule), default=0.0),
+        "resources": s.resources,
     }
     if theme == "corona":
         # Inline the vendored Corona stylesheet + embedded fonts → single offline file.
