@@ -227,14 +227,17 @@ rules:
     summary: "Clusters whose real worker CPU utilization is low — candidates to downsize."
     signal_tables: [system.compute.node_timeline, system.compute.clusters, system.billing.usage]
     parameters:
-      min_metric_samples: 10        # require real node_timeline data (never fabricate)
+      min_metric_samples: 30        # require enough real node_timeline data (never fabricate)
       oversized_cpu_pct: 35         # avg worker CPU below this = oversized
       severely_oversized_cpu_pct: 20
+      peak_cpu_guard_pct: 60        # skip bursty clusters whose peak CPU is high (need headroom)
       oversized_factor: 0.25        # recoverable share when oversized
       severely_factor: 0.40         # recoverable share when severely oversized
     # Full-TCO: returns dbu_cost_usd + vm_* columns; engine adds VM cost and assembles
     # list_cost_usd. rightsizing_factor (tiered, in SQL) drives the savings model.
     # Requires real node_timeline metrics — clusters without enough samples are dropped.
+    # Peak guard: a low *average* CPU with a high *peak* means a bursty workload that needs
+    # the capacity — flagging it to downsize is a false positive, so it's excluded.
     detection_sql: |
       WITH util AS (
         SELECT
@@ -297,6 +300,7 @@ rules:
       WHERE ut.metric_samples >= :min_metric_samples
         AND ut.avg_worker_cpu IS NOT NULL
         AND ut.avg_worker_cpu < :oversized_cpu_pct
+        AND ut.peak_worker_cpu < :peak_cpu_guard_pct
       ORDER BY co.dbu_cost_usd DESC
     savings_model: "list_cost_usd * rightsizing_factor"
     remediation:
