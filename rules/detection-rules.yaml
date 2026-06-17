@@ -61,11 +61,15 @@ rules:
     category: idle
     severity: high
     confidence: medium
-    summary: "Warehouses are incurring cost with little or no query activity."
+    summary: "Warehouses incurring cost with little or no query activity (where activity is observable)."
     signal_tables: [system.billing.usage, system.query.history]
     parameters:
       min_queries: 25            # below this over the window = effectively idle
       idle_recover_pct: 0.6      # conservative share of cost recoverable via auto-stop/right-size
+    # HARDENING: never infer "idle" from ABSENT telemetry. system.query.history coverage is
+    # per-workspace; if a workspace has no query-history rows at all, a warehouse with zero
+    # queries is indistinguishable from one whose activity simply isn't logged. So we only
+    # assess idleness when the workspace has query-history coverage (workspace_queries > 0).
     detection_sql: |
       WITH wh_cost AS (
         SELECT
@@ -91,15 +95,24 @@ rules:
           AND workspace_id = :workspace_id
           AND compute.warehouse_id IS NOT NULL
         GROUP BY 1
+      ),
+      coverage AS (   -- does this workspace log query history at all in the window?
+        SELECT COUNT(*) AS workspace_queries
+        FROM system.query.history
+        WHERE start_time >= DATE_SUB(current_date(), :lookback_days)
+          AND workspace_id = :workspace_id
       )
       SELECT
         c.warehouse_id,
         c.dbu_cost_usd,
         COALESCE(a.query_count, 0) AS query_count,
-        COALESCE(a.active_hours, 0) AS active_hours
+        COALESCE(a.active_hours, 0) AS active_hours,
+        cov.workspace_queries
       FROM wh_cost c
       LEFT JOIN wh_activity a USING (warehouse_id)
+      CROSS JOIN coverage cov
       WHERE c.dbu_cost_usd > :min_cost_usd
+        AND cov.workspace_queries > 0          -- only assess idleness when telemetry exists
         AND COALESCE(a.query_count, 0) < :min_queries
       ORDER BY c.dbu_cost_usd DESC
     savings_model: "list_cost_usd * idle_recover_pct"
