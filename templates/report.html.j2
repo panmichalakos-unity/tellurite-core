@@ -89,15 +89,27 @@
 </div>
 {% endfor %}
 
+{% if info_findings %}
+<h2>Governance Findings — No Dollar Estimate</h2>
+{% for f in info_findings %}
+<div class="finding-card">
+  <h3>{{ f.title }}</h3>
+  <p><strong>Instance:</strong> {{ f.instance_key }} &nbsp; <strong>Confidence:</strong> {{ f.confidence }}</p>
+  <div class="evidence">{{ f.evidence | tojson(indent=2) }}</div>
+  <div class="remediation"><strong>Next step:</strong> {{ f.remediation.summary }}</div>
+</div>
+{% endfor %}
+{% endif %}
+
 <!-- 5. Methodology & caveats -->
 <h2>Methodology &amp; Caveats</h2>
 <div class="caveat">
   <ul>
-    <li>This report is <strong>read-only</strong>: only <code>SELECT</code> on <code>system.*</code> tables. No business data was accessed.</li>
+    <li>Intended for trusted <code>system.*</code> telemetry queries. Read-only access must be enforced through workspace permissions.</li>
     <li>Cost figures are <strong>estimated at list price</strong> (<code>system.billing.list_prices</code>). Your effective rate may be lower due to private discounts or commit tiers.{% if discount_pct %} A {{ "%.0f"|format(discount_pct * 100) }}% discount was applied.{% endif %}</li>
     <li>Lookback window: <strong>{{ lookback_days }} days</strong>. Monthly estimates are extrapolated from this window.</li>
     <li><strong>Confidence levels:</strong> High = direct $ evidence; Medium = reliable heuristic; Low = proxy signal requiring manual confirmation.</li>
-    <li>No data left your workspace. This report was generated locally.</li>
+    <li>The report is generated locally. Optional public VM-price lookups require network access; inspect warnings and evidence before acting.</li>
   </ul>
 </div>
 

@@ -69,3 +69,7 @@ desktop.ini
 
 # Other
 Team Pipeline Cost & Resource Usage Calculator v2.sql
+
+
+# Disposable synthetic-demo output; committed samples live in examples/.
+/demo-output/

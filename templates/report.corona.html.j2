@@ -295,7 +295,7 @@
                 <div class="card-body">
                   <h4 class="card-title">Methodology &amp; caveats</h4>
                   <ul class="text-muted">
-                    <li><strong>Read-only:</strong> only <code>SELECT</code> on <code>system.*</code>. No business data accessed; nothing left the workspace.</li>
+                    <li><strong>Access boundary:</strong> trusted system-telemetry queries; workspace permissions must enforce read-only access. Optional public-price lookups use network access.</li>
                     <li><strong>Full-TCO list-price basis</strong> (DBU + VM/infra). Your effective rate may be lower via private discounts{% if discount_pct %}; a {{ "{:.0f}".format(discount_pct * 100) }}% discount was applied{% endif %}.</li>
                     <li><strong>Savings %</strong> is discount-invariant — it holds even under promotional/negotiated pricing.</li>
                     <li><strong>Overlap:</strong> a resource can match several rules that target the same spend. The headline takes the largest estimate per resource (conservative); per-rule findings below may overlap.</li>

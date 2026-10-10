@@ -1,0 +1,208 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <title>Databricks Cost Doctor — Findings Report</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 960px; margin: 2rem auto; color: #222; }
+    h1 { color: #c0392b; }
+    h2 { border-bottom: 1px solid #ddd; padding-bottom: .25rem; }
+    .headline { background: #fdf3f3; border-left: 4px solid #c0392b; padding: 1rem; margin-bottom: 2rem; }
+    .headline .total { font-size: 2rem; font-weight: bold; color: #c0392b; }
+    table { border-collapse: collapse; width: 100%; margin-bottom: 2rem; }
+    th, td { border: 1px solid #ddd; padding: .5rem .75rem; text-align: left; }
+    th { background: #f5f5f5; }
+    .sev-high { color: #c0392b; font-weight: bold; }
+    .sev-medium { color: #e67e22; }
+    .sev-low { color: #7f8c8d; }
+    .finding-card { border: 1px solid #ddd; border-radius: 6px; padding: 1rem; margin-bottom: 1.5rem; }
+    .finding-card h3 { margin-top: 0; }
+    .evidence { background: #f9f9f9; padding: .5rem; border-radius: 4px; font-family: monospace; font-size: .85rem; white-space: pre-wrap; }
+    .remediation { background: #eafaf1; border-left: 3px solid #27ae60; padding: .5rem .75rem; margin-top: .75rem; }
+    .caveat { background: #fefce8; border: 1px solid #f1c40f; padding: .75rem; border-radius: 4px; font-size: .9rem; }
+  </style>
+</head>
+<body>
+<p class="caveat"><strong>SYNTHETIC DEMONSTRATION.</strong> Invented workloads and prices; no Databricks connection. Figures are illustrative, not measured savings.</p>
+
+<h1>Databricks Cost Doctor</h1>
+<p style="color:#888">by Akmonlabs &nbsp;|&nbsp; Lookback: 30 days &nbsp;|&nbsp; Currency: USD</p>
+
+<!-- 1. Headline -->
+<div class="headline">
+  <div class="total">$860 / month (est.) &mdash; 33% of attributed spend</div>
+  <div>3 findings &mdash;
+    <span class="sev-high">2 high</span>,
+    <span class="sev-medium">1 medium</span>,
+    <span class="sev-low">0 low</span>
+  </div>
+</div>
+
+<!-- 2. Top findings table -->
+<h2>Top Findings</h2>
+
+<table>
+  <thead>
+    <tr>
+      <th>#</th>
+      <th>Finding</th>
+      <th>Instance</th>
+      <th>Est. Waste / Mo</th>
+      <th>Savings %</th>
+      <th>Severity</th>
+      <th>Confidence</th>
+      <th>Quick Fix</th>
+    </tr>
+  </thead>
+  <tbody>
+    
+    <tr>
+      <td>1</td>
+      <td>Review idle compute capacity</td>
+      <td>demo-nightly</td>
+      <td><strong>$660</strong></td>
+      <td>30%</td>
+      <td class="sev-high">high</td>
+      <td>medium</td>
+      <td>Check workload peaks and runtime requirements before changing capacity.</td>
+    </tr>
+    
+    <tr>
+      <td>2</td>
+      <td>Review compute configuration</td>
+      <td>demo-nightly</td>
+      <td><strong>$440</strong></td>
+      <td>20%</td>
+      <td class="sev-medium">medium</td>
+      <td>low</td>
+      <td>Benchmark an alternative configuration; this estimate is illustrative.</td>
+    </tr>
+    
+    <tr>
+      <td>3</td>
+      <td>Review idle compute capacity</td>
+      <td>demo-reporting</td>
+      <td><strong>$200</strong></td>
+      <td>50%</td>
+      <td class="sev-high">high</td>
+      <td>medium</td>
+      <td>Check workload peaks and runtime requirements before changing capacity.</td>
+    </tr>
+    
+  </tbody>
+</table>
+
+
+<!-- 3. Per-finding detail -->
+<h2>Finding Details</h2>
+
+<div class="finding-card">
+  <h3>1. Review idle compute capacity <small style="color:#888">demo_idle_capacity</small></h3>
+  <p><strong>Severity:</strong> <span class="sev-high">high</span> &nbsp;
+     <strong>Confidence:</strong> medium &nbsp;
+     <strong>Est. Waste:</strong> $660/mo (30% of $2200 attributed)</p>
+  <p><strong>Instance:</strong> demo-nightly</p>
+  <div class="evidence">{
+  "configuration_review": 1,
+  "cost_owner": "analytics",
+  "dbu_cost_usd": 2000.0,
+  "idle_fraction": 0.3,
+  "job_id": "demo-nightly",
+  "job_name": "Synthetic nightly transform",
+  "list_cost_usd": 2200.0,
+  "vm_cost_usd": 200.0,
+  "vm_node_type": "Standard_DEMO_DRIVER",
+  "vm_priced": true,
+  "vm_runtime_hours": 100.0,
+  "vm_worker_count": 2,
+  "vm_worker_node_type": "Standard_DEMO_WORKER"
+}</div>
+  <div class="remediation">
+    <strong>Fix:</strong> Check workload peaks and runtime requirements before changing capacity.<br/>
+    
+  </div>
+</div>
+
+<div class="finding-card">
+  <h3>2. Review compute configuration <small style="color:#888">demo_configuration_review</small></h3>
+  <p><strong>Severity:</strong> <span class="sev-medium">medium</span> &nbsp;
+     <strong>Confidence:</strong> low &nbsp;
+     <strong>Est. Waste:</strong> $440/mo (20% of $2200 attributed)</p>
+  <p><strong>Instance:</strong> demo-nightly</p>
+  <div class="evidence">{
+  "configuration_review": 1,
+  "cost_owner": "analytics",
+  "dbu_cost_usd": 2000.0,
+  "idle_fraction": 0.3,
+  "job_id": "demo-nightly",
+  "job_name": "Synthetic nightly transform",
+  "list_cost_usd": 2200.0,
+  "vm_cost_usd": 200.0,
+  "vm_node_type": "Standard_DEMO_DRIVER",
+  "vm_priced": true,
+  "vm_runtime_hours": 100.0,
+  "vm_worker_count": 2,
+  "vm_worker_node_type": "Standard_DEMO_WORKER"
+}</div>
+  <div class="remediation">
+    <strong>Fix:</strong> Benchmark an alternative configuration; this estimate is illustrative.<br/>
+    
+  </div>
+</div>
+
+<div class="finding-card">
+  <h3>3. Review idle compute capacity <small style="color:#888">demo_idle_capacity</small></h3>
+  <p><strong>Severity:</strong> <span class="sev-high">high</span> &nbsp;
+     <strong>Confidence:</strong> medium &nbsp;
+     <strong>Est. Waste:</strong> $200/mo (50% of $400 attributed)</p>
+  <p><strong>Instance:</strong> demo-reporting</p>
+  <div class="evidence">{
+  "configuration_review": 0,
+  "cost_owner": null,
+  "dbu_cost_usd": 400.0,
+  "idle_fraction": 0.5,
+  "job_id": "demo-reporting",
+  "job_name": "Synthetic reporting workload",
+  "list_cost_usd": 400.0,
+  "vm_node_type": null,
+  "vm_runtime_hours": 0.0,
+  "vm_worker_count": 0,
+  "vm_worker_node_type": null
+}</div>
+  <div class="remediation">
+    <strong>Fix:</strong> Check workload peaks and runtime requirements before changing capacity.<br/>
+    
+  </div>
+</div>
+
+
+
+<h2>Governance Findings — No Dollar Estimate</h2>
+
+<div class="finding-card">
+  <h3>Assign a cost owner</h3>
+  <p><strong>Instance:</strong> demo-reporting &nbsp; <strong>Confidence:</strong> high</p>
+  <div class="evidence">{
+  "job_id": "demo-reporting",
+  "job_name": "Synthetic reporting workload"
+}</div>
+  <div class="remediation"><strong>Next step:</strong> Assign an accountable cost owner.</div>
+</div>
+
+
+
+<!-- 5. Methodology & caveats -->
+<h2>Methodology &amp; Caveats</h2>
+<div class="caveat">
+  <ul>
+    <li>The example executed SELECT statements on a disposable in-memory SQLite database containing only synthetic data.</li>
+    <li>Cost figures are <strong>estimated at list price</strong> (invented demonstration prices). Your effective rate may be lower due to private discounts or commit tiers.</li>
+    <li>Lookback window: <strong>30 days</strong>. Monthly estimates are extrapolated from this window.</li>
+    <li><strong>Confidence levels:</strong> High = direct $ evidence; Medium = reliable heuristic; Low = proxy signal requiring manual confirmation.</li>
+    <li>The example makes no network requests and uses no workspace credentials.</li>
+  </ul>
+</div>
+
+<p style="color:#aaa;font-size:.8rem;margin-top:3rem">Generated by Tellurite Cost Doctor &mdash; Akmonlabs</p>
+</body>
+</html>

@@ -47,8 +47,8 @@ def test_unknown_profile_raises(tmp_path):
 
 def test_workspace_id_derived_from_azure_host(monkeypatch):
     monkeypatch.delenv("DATABRICKS_HOST", raising=False)
-    prof = load_profile(None, overrides={"host": "adb-552328812448318.18.azuredatabricks.net"})
-    assert prof.workspace_id == "552328812448318"
+    prof = load_profile(None, overrides={"host": "adb-111.2.azuredatabricks.net"})
+    assert prof.workspace_id == "111"
 
 
 def test_workspace_id_explicit_wins_over_host(monkeypatch):
@@ -64,3 +64,4 @@ def test_workspace_id_none_for_non_azure_host(monkeypatch):
     monkeypatch.delenv("DATABRICKS_HOST", raising=False)
     prof = load_profile(None, overrides={"host": "dbc-abc.cloud.databricks.com"})
     assert prof.workspace_id is None
+

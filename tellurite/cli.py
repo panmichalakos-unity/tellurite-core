@@ -25,7 +25,8 @@ console = Console()
 def cli() -> None:
     """Tellurite Audit — Databricks cost audit tool by Akmonlabs.
 
-    Reads only system.* tables. No writes. No data egress.
+    Uses system-telemetry rules. Enforce read-only access through workspace permissions.
+    Optional public-price lookups require network access.
     """
 
 

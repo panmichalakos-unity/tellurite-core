@@ -1,0 +1,109 @@
+[
+  {
+    "rule_id": "demo_idle_capacity",
+    "title": "Review idle compute capacity",
+    "category": "compute_config",
+    "severity": "high",
+    "confidence": "medium",
+    "instance_key": "demo-nightly",
+    "monthly_waste_usd": 660.0,
+    "attributed_cost_usd": 2200.0,
+    "savings_pct": 0.3,
+    "evidence": {
+      "job_id": "demo-nightly",
+      "job_name": "Synthetic nightly transform",
+      "dbu_cost_usd": 2000.0,
+      "idle_fraction": 0.3,
+      "vm_node_type": "Standard_DEMO_DRIVER",
+      "vm_worker_node_type": "Standard_DEMO_WORKER",
+      "vm_worker_count": 2,
+      "vm_runtime_hours": 100.0,
+      "configuration_review": 1,
+      "cost_owner": "analytics",
+      "vm_cost_usd": 200.0,
+      "vm_priced": true,
+      "list_cost_usd": 2200.0
+    },
+    "remediation": {
+      "summary": "Check workload peaks and runtime requirements before changing capacity.",
+      "pr_hint": ""
+    }
+  },
+  {
+    "rule_id": "demo_configuration_review",
+    "title": "Review compute configuration",
+    "category": "compute_config",
+    "severity": "medium",
+    "confidence": "low",
+    "instance_key": "demo-nightly",
+    "monthly_waste_usd": 440.0,
+    "attributed_cost_usd": 2200.0,
+    "savings_pct": 0.2,
+    "evidence": {
+      "job_id": "demo-nightly",
+      "job_name": "Synthetic nightly transform",
+      "dbu_cost_usd": 2000.0,
+      "idle_fraction": 0.3,
+      "vm_node_type": "Standard_DEMO_DRIVER",
+      "vm_worker_node_type": "Standard_DEMO_WORKER",
+      "vm_worker_count": 2,
+      "vm_runtime_hours": 100.0,
+      "configuration_review": 1,
+      "cost_owner": "analytics",
+      "vm_cost_usd": 200.0,
+      "vm_priced": true,
+      "list_cost_usd": 2200.0
+    },
+    "remediation": {
+      "summary": "Benchmark an alternative configuration; this estimate is illustrative.",
+      "pr_hint": ""
+    }
+  },
+  {
+    "rule_id": "demo_idle_capacity",
+    "title": "Review idle compute capacity",
+    "category": "compute_config",
+    "severity": "high",
+    "confidence": "medium",
+    "instance_key": "demo-reporting",
+    "monthly_waste_usd": 200.0,
+    "attributed_cost_usd": 400.0,
+    "savings_pct": 0.5,
+    "evidence": {
+      "job_id": "demo-reporting",
+      "job_name": "Synthetic reporting workload",
+      "dbu_cost_usd": 400.0,
+      "idle_fraction": 0.5,
+      "vm_node_type": null,
+      "vm_worker_node_type": null,
+      "vm_worker_count": 0,
+      "vm_runtime_hours": 0.0,
+      "configuration_review": 0,
+      "cost_owner": null,
+      "list_cost_usd": 400.0
+    },
+    "remediation": {
+      "summary": "Check workload peaks and runtime requirements before changing capacity.",
+      "pr_hint": ""
+    }
+  },
+  {
+    "rule_id": "demo_missing_owner",
+    "title": "Assign a cost owner",
+    "category": "attribution",
+    "severity": "low",
+    "confidence": "high",
+    "instance_key": "demo-reporting",
+    "monthly_waste_usd": 0.0,
+    "attributed_cost_usd": null,
+    "savings_pct": null,
+    "evidence": {
+      "job_id": "demo-reporting",
+      "job_name": "Synthetic reporting workload"
+    },
+    "remediation": {
+      "summary": "Assign an accountable cost owner.",
+      "pr_hint": ""
+    }
+  }
+]

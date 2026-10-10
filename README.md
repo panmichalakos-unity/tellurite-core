@@ -1,77 +1,63 @@
-# Tellurite Audit
+# Tellurite — Databricks Cost Diagnostics
 
-Read-only diagnostic that scans a Databricks workspace's `system.*` tables and produces a ranked, dollar-quantified report of cost waste — each finding with a specific fix. **Advisory only. No writes. No data egress.**
+A Python and SQL prototype that turns Databricks system telemetry into ranked cost-optimization findings, with evidence, confidence and suggested remediation.
 
-- **What it is / why:** `PRODUCT-OVERVIEW.md`
-- **How it's built / milestones:** `SPEC.md`
-- **Agent instructions (Cursor + Claude Code):** `CLAUDE.md`
-- **Detection rules (the IP):** `rules/detection-rules.yaml`
+**Author and project owner: Panos Michalakos.** Independent side project. The implementation is a working prototype, not a production-certified service. Estimates are opportunities to investigate, not measured savings.
 
-## Safety (read before running)
+## See it working without Databricks
 
-- Strictly **read-only**: only `SELECT` on `system.*`. Never touches business/customer data.
-- **No egress**: the report is written locally inside the workspace. Nothing phones home. The only outbound call is a pull of the cloud's **public** VM price catalog (cloud + region only — no workspace data leaves); it can be skipped for air-gapped runs via a bundled fallback price table.
-- Validating on your employer's workspace is a legit cost-optimization task — keep outputs internal and **anonymize** before anything becomes a public sample. See `SPEC.md` §15.
-
-## Quickstart (target state — Claude Code builds this)
+The offline example executes illustrative SQL against an in-memory SQLite database, then uses the same rule engine, pricing enrichment and report renderer as the live path. All example workloads and VM prices are invented. No credentials, workspace connection or network calls are required for the example after installing dependencies.
 
 ```bash
-# install (editable, from repo)
-pip install -e .
-
-# configure a profile: host, http_path/warehouse, auth (env vars / Databricks auth)
-export DATABRICKS_HOST=... DATABRICKS_TOKEN=... DATABRICKS_HTTP_PATH=...
-
-# run a scan over the last 30 days → ranked HTML + Markdown report (full-TCO: DBU + VM)
-tellurite-audit run --profile work --lookback 30 --cloud azure --out report.html
-
-# savings are shown as $ and as a % of cost; the % holds even under promo/negotiated pricing.
-# hide the inline % with --no-savings-pct (it stays in the JSON output regardless)
-
-# inspect / validate the rule catalog
-tellurite-audit rules list
-tellurite-audit rules check
+python -m venv .venv
+# Linux/macOS: source .venv/bin/activate
+# Windows PowerShell: .venv\Scripts\Activate.ps1
+python -m pip install -e '.[dev]'
+python examples/offline_demo.py --out demo-output
+python -m pytest -q
 ```
 
-Prereqs in the workspace: Unity Catalog enabled; `SELECT` granted on the `system` schemas you scan (billing is on by default; others may need enabling by an account admin).
+Open `demo-output/report.html` in a browser. A committed [sample report](examples/sample-report.html) and [findings JSON](examples/sample-findings.json) are available without running anything.
 
-### Authentication
+The example produces three cost findings and one governance finding. Two cost findings concern the same workload: their naive sum is **$1,300**, while the per-resource maximum gives an **$860 overlap-adjusted estimate**. These are synthetic 30-day figures, not customer results.
 
-Three modes, selected by `auth:` in a profile or `--auth`:
+## What is implemented
 
-- **`cli` — Databricks unified auth (recommended, no PAT needed).** One-time login, then headless (tokens auto-refresh):
-  ```bash
-  winget install Databricks.DatabricksCLI          # or see docs for other OSes
-  databricks auth login --host https://adb-XXXX.NN.azuredatabricks.net
-  ```
-  The SDK reads `~/.databrickscfg` (matched by host, or pin a section with `--databricks-profile`). `az login` also works if the Azure CLI is configured.
-- **`oauth`** — connector-native browser login (no CLI install); token cached by the connector.
-- **`pat`** — personal access token via `DATABRICKS_TOKEN` / `--token`.
+| Component | Evidence |
+| --- | --- |
+| Data-driven detection | [Rule engine](tellurite/engine.py) loads validated YAML rules and executes SQL through a connector |
+| Cost assembly | Combines DBU cost with available VM pricing; missing VM prices are explicitly flagged |
+| Prioritization | Findings include severity, confidence, evidence and remediation, ranked by estimated impact |
+| Overlap handling | [Report summary](tellurite/report.py) uses the maximum estimate per resource rather than summing overlapping findings |
+| Governance findings | Findings without dollar impact remain separate from the savings headline |
+| Configuration and connectivity | Profiles, environment-based authentication, workspace scoping and a Databricks SQL adapter |
+| Validation | Offline tests for configuration, engine calculations, price-catalog parsing and report summaries |
 
-Copy `profiles.example.yaml` → `profiles.yaml` (gitignored) to save a workspace, then:
+## Engineering decisions worth reviewing
 
-```bash
-tellurite-audit ping --profile work     # verify connectivity (SELECT 1)
-tellurite-audit run  --profile work --out report.html
-```
+1. **Keep detection separate from execution.** SQL and rule parameters live in YAML; the engine assembles findings without embedding individual detection logic.
+2. **Expose uncertainty.** Unknown VM prices flag an incomplete cost basis. Confidence is carried with each finding instead of presenting every heuristic as proven savings.
+3. **Avoid additive savings claims.** Multiple changes may recover the same underlying spend. The headline takes the largest estimate per resource; this is a simple overlap heuristic, not an optimization model.
+4. **Make core behavior testable offline.** Connectors are an execution seam. Tests and the example exercise the engine without a paid Databricks workspace.
 
-## How it works
+Read [architecture and limitations](docs/architecture.md) for the execution path, trust boundaries and shortcuts in this prototype. [Validation evidence](docs/validation.md) records the checks actually executed.
 
-`cli.py` → load profile + `rules/*.yaml` → `engine.run()` executes each rule's read-only SQL via `connector.py` → applies `savings_model` → builds ranked `Finding`s → `report.py` renders HTML/Markdown. Cost is **full TCO** (DBU + VM/infra): the DBU `usage × list_prices` join lives in `attribution.py` / `sql/cost_attribution.sql`, and VM prices come from `pricing.py` (cloud catalog snapshot, `--cloud azure|aws`, bundled fallback). The engine is generic — **all rule logic is data, not code.**
+## Live path and boundaries
 
-## Extending: add a detection rule
+The live CLI is retained: `tellurite-audit --help`, `tellurite-audit ping --help` and `tellurite-audit run --help`. Copy [profiles.example.yaml](profiles.example.yaml) to the gitignored `profiles.yaml` only if you intend to configure a live workspace. Keep credentials in environment variables or your Databricks authentication setup.
 
-1. Add an entry to `rules/detection-rules.yaml` (schema in `SPEC.md` §7).
-2. Write read-only `detection_sql` returning one row per finding + a `list_cost_usd` (or your `savings_model` columns) + evidence keys.
-3. Set `savings_model`, `remediation`, `references`.
-4. Add a golden test in `tests/`. Don't special-case the engine.
+The supplied live queries are intended for system telemetry. **Read-only access must be enforced through workspace permissions**; the connector is not a SQL authorization layer. Live operation was not validated as part of the offline showcase checks.
 
-Full contract + guardrails: `CLAUDE.md`.
+The full rule catalogue is proprietary. This repository remains a source-visible showcase if its owner chooses to publish it; no open-source licence is granted by this README. Third-party dependencies retain their own licences; bundled components are credited in [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-## Status
+## Status and limitations
 
-Pre-MVP scaffold. Build order: **M0** scaffold → **M1** attribution + rules 1–4 → **M2** report → **M3** rules 5 & 10 + hardening → **M4** audit-ready. See `SPEC.md` §12.
+- SQL compatibility and system-table availability vary across workspaces. A failed query is skipped with a warning; a partial report does not establish that all checks passed.
+- Savings expressions and rule SQL are trusted project configuration. The evaluator is not a sandbox for untrusted rules.
+- The live connector currently uses custom placeholder substitution. Treat it as a prototype boundary, not a general-purpose safe query interface.
+- Azure public VM pricing is supported, with a bundled fallback; live AWS pricing is not implemented. Public/list rates may differ from negotiated costs.
+- Monthly estimates assume a representative observation window. Changes require workload validation before implementation.
 
-## Roadmap (v2)
+`SPEC.md`, `PRODUCT-OVERVIEW.md` and older planning notes document design intent; this README and executable checks describe the current implementation.
 
-SQL/dbt AST analysis · remediation-PR generation (Claude Code) · hosted scheduled monitoring + regression alerts · multi-workspace.
+There is no claim here of production adoption, independently verified financial savings or a finished commercial product.

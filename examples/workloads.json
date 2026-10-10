@@ -1,0 +1,5 @@
+[
+  {"job_id":"demo-nightly","job_name":"Synthetic nightly transform","dbu_cost_usd":2000.0,"idle_fraction":0.30,"vm_node_type":"Standard_DEMO_DRIVER","vm_worker_node_type":"Standard_DEMO_WORKER","vm_worker_count":2,"vm_runtime_hours":100.0,"configuration_review":1,"cost_owner":"analytics"},
+  {"job_id":"demo-ingestion","job_name":"Synthetic ingestion","dbu_cost_usd":600.0,"idle_fraction":0.05,"vm_node_type":null,"vm_worker_node_type":null,"vm_worker_count":0,"vm_runtime_hours":0.0,"configuration_review":0,"cost_owner":"platform"},
+  {"job_id":"demo-reporting","job_name":"Synthetic reporting workload","dbu_cost_usd":400.0,"idle_fraction":0.50,"vm_node_type":null,"vm_worker_node_type":null,"vm_worker_count":0,"vm_runtime_hours":0.0,"configuration_review":0,"cost_owner":null}
+]

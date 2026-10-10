@@ -1,4 +1,6 @@
-"""Databricks SQL connector — executes read-only queries against system.* tables.
+"""Databricks SQL adapter — intended for trusted system-telemetry queries.
+
+Read-only access is enforced by workspace permissions, not by this adapter.
 
 Connection-only config lives here; run parameters (lookback, currency, discount,
 cloud, region) live on the Profile in `config.py`. The `databricks` SQL driver is
@@ -91,7 +93,7 @@ class DatabricksConnector:
         self.close()
 
     def query(self, sql: str, params: dict[str, Any] | None = None) -> list[dict[str, Any]]:
-        """Execute a read-only SQL statement and return rows as dicts."""
+        """Execute trusted SQL and return rows as dicts; privileges enforce read-only access."""
         assert self._conn is not None, "call connect() first"
         # Replace :param placeholders with values for connectors that don't support named params
         resolved = _bind_params(sql, params or {})

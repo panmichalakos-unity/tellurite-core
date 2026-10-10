@@ -1,0 +1,36 @@
+# Illustrative SQLite rules, not the commercial Databricks detection catalogue.
+defaults:
+  idle_threshold: 0.20
+rules:
+  - id: demo_idle_capacity
+    title: Review idle compute capacity
+    category: compute_config
+    severity: high
+    confidence: medium
+    summary: Synthetic idle signal that requires workload validation.
+    detection_sql: SELECT * FROM demo_workloads WHERE idle_fraction >= :idle_threshold
+    savings_model: list_cost_usd * idle_fraction
+    remediation:
+      summary: Check workload peaks and runtime requirements before changing capacity.
+  - id: demo_configuration_review
+    title: Review compute configuration
+    category: compute_config
+    severity: medium
+    confidence: low
+    summary: Demonstrates another estimate against the same workload cost basis.
+    parameters:
+      illustrative_recovery_factor: 0.20
+    detection_sql: SELECT * FROM demo_workloads WHERE configuration_review = 1
+    savings_model: list_cost_usd * illustrative_recovery_factor
+    remediation:
+      summary: Benchmark an alternative configuration; this estimate is illustrative.
+  - id: demo_missing_owner
+    title: Assign a cost owner
+    category: attribution
+    severity: low
+    confidence: high
+    summary: A governance gap, not a dollar-saving claim.
+    detection_sql: SELECT job_id, job_name FROM demo_workloads WHERE cost_owner IS NULL
+    savings_model: "0"
+    remediation:
+      summary: Assign an accountable cost owner.
